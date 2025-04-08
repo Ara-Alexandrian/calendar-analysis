@@ -1,0 +1,6 @@
+pandas
+matplotlib
+seaborn
+ollama  # Added
+# openai # Removed or commented out
+tqdm
