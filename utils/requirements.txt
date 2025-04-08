@@ -1,6 +1,8 @@
+# requirements.txt
 pandas
 matplotlib
 seaborn
-ollama  # Added
-# openai # Removed or commented out
+ollama
 tqdm
+streamlit # Add Streamlit
+plotly    # Add Plotly for interactive charts
