@@ -1,27 +1,186 @@
-// config/personnel_config.json
 {
-    "A. Alexandrian": {"role": "physicist", "clinical_pct": 0.80, "variations": ["A. Alexandrian", "Alexandrian"]},
-    "D. Perrin": {"role": "physicist", "clinical_pct": 0.95, "variations": ["D. Perrin", "Perrin"]},
-    "D. Neck": {"role": "physicist", "clinical_pct": 0.95, "variations": ["D. Neck", "Neck"]},
-    "D. Solis": {"role": "physicist", "clinical_pct": 0.60, "variations": ["D. Solis", "Solis"]},
-    "C. Chu": {"role": "physicist", "clinical_pct": 0.95, "variations": ["C. Chu", "Chu"]},
-    "B. Smith": {"role": "physicist", "clinical_pct": 0.95, "variations": ["B. Smith", "Smith"]},
-    "A. McGuffey": {"role": "physicist", "clinical_pct": 0.80, "variations": ["A. McGuffey", "McGuffey"]},
-    "E. Chorniak": {"role": "physicist", "clinical_pct": 0.95, "variations": ["E. Chorniak", "Chorniak"]},
-    "G. Pitcher": {"role": "physicist", "clinical_pct": 0.50, "variations": ["G. Pitcher", "Pitcher"]},
-    "S. Stathakis": {"role": "physicist", "clinical_pct": 0.40, "variations": ["S. Stathakis", "Stathakis"]},
-    "C. Schneider": {"role": "physicist", "clinical_pct": 0.80, "variations": ["C. Schneider", "Schneider"]},
-    "R. Guidry": {"role": "physicist", "clinical_pct": 0.95, "variations": ["R. Guidry", "Guidry"]},
-    "J. Voss": {"role": "physicist", "clinical_pct": 0.95, "variations": ["J. Voss", "Voss"]},
-    "A. Husain": {"role": "physicist", "clinical_pct": 0.95, "variations": ["A. Husain", "Husain"]},
-    "J. Chen": {"role": "physicist", "clinical_pct": 0.95, "variations": ["J. Chen", "Chen"]},
-    "Wood": {"role": "physician", "clinical_pct": 0.95, "variations": ["Wood"]},
-    "King": {"role": "physician", "clinical_pct": 0.95, "variations": ["King", "King III"]},
-    "Kovtun": {"role": "physician", "clinical_pct": 0.95, "variations": ["Kovtun"]},
-    "Wang": {"role": "physician", "clinical_pct": 0.95, "variations": ["Wang"]},
-    "Elson": {"role": "physician", "clinical_pct": 0.95, "variations": ["Elson"]},
-    "Castle": {"role": "physician", "clinical_pct": 0.95, "variations": ["Castle"]},
-    "Hymel": {"role": "physician", "clinical_pct": 0.95, "variations": ["Hymel"]},
-    "Henkelmann": {"role": "physician", "clinical_pct": 0.95, "variations": ["Henkelmann"]},
-    "Bermudez": {"role": "physician", "clinical_pct": 0.95, "variations": ["Bermudez"]}
+    "A. Alexandrian": {
+        "role": "physicist",
+        "clinical_pct": 0.8,
+        "variations": [
+            "A. Alexandrian",
+            "Alexandrian"
+        ]
+    },
+    "D. Perrin": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "D. Perrin",
+            "Perrin"
+        ]
+    },
+    "D. Neck": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "D. Neck",
+            "Neck"
+        ]
+    },
+    "D. Solis": {
+        "role": "physicist",
+        "clinical_pct": 0.6,
+        "variations": [
+            "D. Solis",
+            "Solis"
+        ]
+    },
+    "C. Chu": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "C. Chu",
+            "Chu"
+        ]
+    },
+    "B. Smith": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "B. Smith",
+            "Smith"
+        ]
+    },
+    "A. McGuffey": {
+        "role": "physicist",
+        "clinical_pct": 0.8,
+        "variations": [
+            "A. McGuffey",
+            "McGuffey"
+        ]
+    },
+    "E. Chorniak": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "E. Chorniak",
+            "Chorniak"
+        ]
+    },
+    "G. Pitcher": {
+        "role": "physicist",
+        "clinical_pct": 0.5,
+        "variations": [
+            "G. Pitcher",
+            "Pitcher"
+        ]
+    },
+    "S. Stathakis": {
+        "role": "physicist",
+        "clinical_pct": 0.4,
+        "variations": [
+            "S. Stathakis",
+            "Stathakis"
+        ]
+    },
+    "C. Schneider": {
+        "role": "physicist",
+        "clinical_pct": 0.8,
+        "variations": [
+            "C. Schneider",
+            "Schneider"
+        ]
+    },
+    "R. Guidry": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "R. Guidry",
+            "Guidry"
+        ]
+    },
+    "J. Voss": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "J. Voss",
+            "Voss"
+        ]
+    },
+    "A. Husain": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "A. Husain",
+            "Husain"
+        ]
+    },
+    "J. Chen": {
+        "role": "physicist",
+        "clinical_pct": 0.95,
+        "variations": [
+            "J. Chen",
+            "Chen"
+        ]
+    },
+    "Wood": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Wood"
+        ]
+    },
+    "King": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "King",
+            "King III"
+        ]
+    },
+    "Kovtun": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Kovtun"
+        ]
+    },
+    "Wang": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Wang"
+        ]
+    },
+    "Elson": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Elson"
+        ]
+    },
+    "Castle": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Castle"
+        ]
+    },
+    "Hymel": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Hymel"
+        ]
+    },
+    "Henkelmann": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Henkelmann"
+        ]
+    },
+    "Bermudez": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "Bermudez"
+        ]
+    }
 }

@@ -118,3 +118,55 @@ def plot_daily_hourly_heatmap(df_filtered: pd.DataFrame):
      )
 
     return fig
+
+def create_personnel_heatmap(df):
+    """
+    Create a heatmap showing personnel workload by day of week and hour
+    
+    Args:
+        df (pandas.DataFrame): DataFrame with event data including start_time
+        
+    Returns:
+        plotly.graph_objects.Figure: Heatmap visualization
+    """
+    import plotly.express as px
+    import pandas as pd
+    
+    # Extract day of week and hour
+    df = df.copy()
+    
+    # Ensure the start_time is a datetime object
+    if not pd.api.types.is_datetime64_any_dtype(df['start_time']):
+        df['start_time'] = pd.to_datetime(df['start_time'])
+    
+    df['day_of_week'] = df['start_time'].dt.day_name()
+    df['hour'] = df['start_time'].dt.hour
+    
+    # Aggregate data
+    heatmap_data = df.groupby(['day_of_week', 'hour']).size().reset_index(name='count')
+    
+    # Create pivot table
+    pivot_data = heatmap_data.pivot(index='day_of_week', columns='hour', values='count')
+    
+    # Fill NaN values with 0
+    pivot_data = pivot_data.fillna(0)
+    
+    # Sort days of week
+    days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    pivot_data = pivot_data.reindex(days_order)
+    
+    # Create heatmap
+    fig = px.imshow(
+        pivot_data,
+        labels=dict(x="Hour of Day", y="Day of Week", color="Event Count"),
+        x=[f"{h}:00" for h in range(24) if h in pivot_data.columns],
+        y=[day for day in days_order if day in pivot_data.index],
+        color_continuous_scale="Viridis"
+    )
+    
+    fig.update_layout(
+        title="Event Distribution by Day and Hour",
+        height=500
+    )
+    
+    return fig

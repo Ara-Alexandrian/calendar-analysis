@@ -6,7 +6,7 @@ import os
 # --- Path Setup & Early Init ---
 # Add project root to sys.path BEFORE importing local modules
 import sys
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up one level to get to the root
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 # --- End Path Setup ---
@@ -20,14 +20,21 @@ os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 # Clear existing handlers if any (important for Streamlit re-runs)
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
-# Set up basic config
+
+# Set up console handler with UTF-8 encoding
+console_handler = logging.StreamHandler()
+# Set encoding for FileHandler to UTF-8 explicitly
+file_handler = logging.FileHandler(settings.LOG_FILE, encoding='utf-8')
+
+# Configure formatter
+formatter = logging.Formatter(settings.LOG_FORMAT)
+console_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+
+# Set up basic config with these handlers
 logging.basicConfig(
     level=settings.LOGGING_LEVEL,
-    format=settings.LOG_FORMAT,
-    handlers=[
-        logging.FileHandler(settings.LOG_FILE),
-        logging.StreamHandler() # Also log to console where streamlit runs
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 # --- End Logging Config ---

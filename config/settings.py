@@ -25,10 +25,32 @@ LOG_FILE = os.path.join(OUTPUT_DIR, 'calendar_analysis.log')
 # --- Ensure Output Directory Exists ---
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# --- Dependencies Information ---
+# This section documents the dependencies required for different features
+# Required dependencies:
+#   - streamlit: Web UI framework
+#   - pandas: Data processing
+#   - plotly: Visualization
+#
+# Optional dependencies:
+#   - ollama: Required for LLM extraction of personnel names (pip install ollama)
+#   - tqdm: Optional for progress bars in CLI mode
+#   - psycopg2-binary: Required for PostgreSQL database connection
+
 # --- LLM Configuration ---
 LLM_PROVIDER = "ollama" # Options: "ollama", None
 OLLAMA_BASE_URL = "http://192.168.1.5:11434" # Required if LLM_PROVIDER is "ollama"
-LLM_MODEL = "llama3.1:8b"
+LLM_MODEL = "mistral:latest" # Switching to a faster model with good name extraction capabilities
+
+# --- Database Configuration ---
+DB_ENABLED = True  # Enable database persistence
+DB_HOST = "192.168.1.50"
+DB_PORT = "5432"
+DB_NAME = "postgres"  # Changed to use the default PostgreSQL database that always exists
+DB_USER = "spc_physics"
+DB_PASSWORD = "!Physics314"  # Make sure there are no hidden/whitespace characters
+DB_TABLE_PROCESSED_DATA = "processed_events"
+DB_TABLE_PERSONNEL = "personnel_config"
 
 # --- Performance Configuration ---
 LLM_MAX_WORKERS = 10 # Parallel threads for LLM extraction

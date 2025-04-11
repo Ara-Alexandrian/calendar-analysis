@@ -11,6 +11,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from functions import config_manager
+from config import settings # Import settings for database configuration
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,23 @@ else:
                 save_success = config_manager.save_personnel_config(new_config_dict)
                 if save_success:
                     st.success("Personnel configuration saved successfully!")
+                    
+                    # Also save to PostgreSQL database if enabled
+                    if settings.DB_ENABLED:
+                        from functions import db_manager
+                        from config import settings
+                        try:
+                            db_save_success = db_manager.save_personnel_config_to_db(new_config_dict)
+                            if db_save_success:
+                                st.success(f"Also saved personnel configuration to PostgreSQL database at {settings.DB_HOST}.")
+                                logger.info(f"Successfully saved personnel configuration to database.")
+                            else:
+                                st.warning("Failed to save personnel configuration to PostgreSQL database. Check logs for details.")
+                                logger.warning("Database personnel save operation returned False.")
+                        except Exception as db_e:
+                            st.error(f"Error saving personnel to database: {db_e}")
+                            logger.error(f"Database personnel save error: {db_e}", exc_info=True)
+                    
                     # Update the working copy in session state to reflect saved changes
                     st.session_state.admin_personnel_config = new_config_dict.copy()
                     # Force reload of config in session state for other pages (might need refresh)
