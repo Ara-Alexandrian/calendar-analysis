@@ -9,10 +9,23 @@ from .client import get_llm_client, is_llm_ready, restart_ollama_server
 from .extractor import (
     extract_personnel_with_llm, 
     run_llm_extraction_parallel,
-    run_llm_extraction_sequential, 
+    ultra_basic_extraction, 
     run_llm_extraction_background
 )
 from .normalizer import normalize_extracted_personnel
+
+# Import the smart extractor if available
+try:
+    from .smart_extractor import run_smart_extraction
+    SMART_EXTRACTION_AVAILABLE = True
+except ImportError:
+    # Create a fallback function that raises ImportError when called
+    def run_smart_extraction(*args, **kwargs):
+        raise ImportError("Smart extraction module is not available")
+    SMART_EXTRACTION_AVAILABLE = False
+
+# Provide the run_llm_extraction_sequential function as an alias to ultra_basic_extraction
+run_llm_extraction_sequential = ultra_basic_extraction
 
 # Configure logging
 logger = logging.getLogger(__name__)

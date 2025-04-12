@@ -135,6 +135,15 @@ if st.session_state.auto_refresh:
 df_analysis = load_latest_data()
 
 # --- Check if data is ready ---
+if df_analysis is None:
+    logger.warning("Analysis page: load_latest_data() returned None.")
+elif df_analysis.empty:
+    logger.warning("Analysis page: load_latest_data() returned an empty DataFrame.")
+else:
+    logger.info(f"Analysis page: Loaded DataFrame with {len(df_analysis)} rows and columns: {df_analysis.columns.tolist()}")
+    # Log data types as well
+    logger.info(f"Analysis page: DataFrame dtypes:\n{df_analysis.dtypes}")
+
 if df_analysis is None or df_analysis.empty:
     st.warning("No processed data available for analysis. Please upload and process data on the 'Upload & Process' page first.", icon="⚠️")
     st.stop() # Stop execution of this page
@@ -224,58 +233,6 @@ except Exception as e:
 # --- Display Analysis Results with Tabs ---
 st.markdown("---")
 st.header("Analysis Results")
-
-# Display background processing status if active
-if st.session_state.get('llm_background_processing', False):
-    st.info("📊 **Background LLM processing is active.** The data will refresh automatically as more events are processed.")
-    
-    # Get the current batch ID
-    batch_id = st.session_state.get('current_batch_id')
-    
-    if batch_id:
-        if settings.DB_ENABLED:
-            # Get processing status from database
-            status = db_manager.get_latest_processing_status(batch_id)
-            
-            # Create a progress bar for background processing
-            if status['status'] == 'in_progress':
-                st.progress(status['pct_complete']/100, text=f"Processing: {status['pct_complete']:.1f}% complete")
-                st.caption(f"Processing details: {status['extracted']} extracted, {status['processing']} remaining")
-                
-                # Force refresh every 10 seconds during active processing
-                st.session_state.auto_refresh = True
-                st.session_state.refresh_interval = min(st.session_state.refresh_interval, 10)
-                
-            elif status['status'] == 'complete':
-                st.success("✅ Background processing complete! All data is now available for analysis.")
-                
-                # When complete, refresh one more time to ensure we have the latest data
-                if st.session_state.get('data_source') != 'database':
-                    st.session_state.data_source = 'database'
-                    st.rerun()
-        else:
-            # Check session state for background processing status when DB is disabled
-            if hasattr(st.session_state, 'background_processed_data') and batch_id in st.session_state.background_processed_data:
-                background_data = st.session_state.background_processed_data[batch_id]
-                
-                if background_data.get('status') == 'complete':
-                    st.success("✅ Background processing complete! All data is now available for analysis.")
-                else:
-                    # Calculate progress if available
-                    if 'progress' in background_data:
-                        progress = background_data['progress']
-                        st.progress(progress, text=f"Processing: {progress*100:.1f}% complete")
-                    
-                    if 'message' in background_data:
-                        st.caption(background_data['message'])
-                    
-                    # Force refresh every 10 seconds during active processing
-                    st.session_state.auto_refresh = True
-                    st.session_state.refresh_interval = min(st.session_state.refresh_interval, 10)
-            else:
-                st.warning("Processing status not available. Auto-refresh enabled to check progress.")
-                st.session_state.auto_refresh = True
-                st.session_state.refresh_interval = 10
 
 if df_filtered.empty:
     st.warning("No data matches the selected filters.")

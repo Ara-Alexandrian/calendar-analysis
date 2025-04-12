@@ -142,115 +142,79 @@ if st.session_state.get('raw_df') is not None:
                     import uuid
                     batch_id = f"batch_{uuid.uuid4().hex[:8]}_{int(time.time())}"
                     st.session_state.current_batch_id = batch_id
+                      # 2. LLM Extraction - Using Smart GPU-Optimized Processing
+                    if llm_enabled and llm_ok: 
+                        st.write("Step 2: Extracting personnel names using optimized dual-GPU LLM extraction...")
+                        progress_container = st.empty()
+                        with progress_container.container():
+                            with st.spinner("Optimized LLM extraction in progress - leveraging dual RTX 3090s and RTX 4090..."):
+                                try:
+                                    # Try the new smart extractor first
+                                    llm_processed_df = llm_extraction.run_smart_extraction(preprocessed_df)
+                                    st.session_state.llm_processed_df = llm_processed_df
+                                except Exception as e:
+                                    logger.warning(f"Smart extraction failed: {e}. Falling back to standard extraction.")
+                                    st.warning("Optimized extraction encountered an issue. Falling back to standard extraction.")
+                                    # Fall back to sequential extraction if smart extraction fails
+                                    llm_processed_df = llm_extraction.run_llm_extraction_sequential(preprocessed_df)
+                                    st.session_state.llm_processed_df = llm_processed_df
+                        st.write("LLM extraction finished.")
+                        logger.info("LLM extraction complete.")
+                    else:
+                        st.warning("Skipping LLM extraction (disabled or not ready). Assigning 'Unknown'.")
+                        # Create placeholder columns if skipping LLM
+                        preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
+                        st.session_state.llm_processed_df = preprocessed_df # Use preprocessed df as base
+
+                    # 3. Normalize Extracted Personnel Names
+                    st.write("Step 3: Normalizing extracted names...")
+                    normalized_df = llm_extraction.normalize_extracted_personnel(st.session_state.llm_processed_df)
+                    st.session_state.normalized_df = normalized_df
+                    st.write("Normalization finished.")
+                    logger.info("Normalization complete.")
+
+                    # Display sample of normalized data
+                    st.write("Sample of data after normalization:")
+                    st.dataframe(normalized_df[['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'assigned_personnel']].head())
+
+                    # 4. Explode by Personnel for Analysis
+                    st.write("Step 4: Preparing data for analysis (exploding by personnel)...")
+                    # Use the 'assigned_personnel' column created by normalization
+                    analysis_ready_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
+                    if analysis_ready_df is None or analysis_ready_df.empty:
+                        st.error("Exploding data failed or resulted in empty data. Check logs.")
+                        st.stop()
+                    st.session_state.analysis_ready_df = analysis_ready_df
+                    st.write(f"Data ready for analysis: {len(analysis_ready_df)} rows after exploding.")
+                    logger.info(f"Explosion complete: {len(analysis_ready_df)} analysis rows.")
+
+                    # Mark processing as complete
+                    st.session_state.data_processed = True
                     
-                    # 2. LLM Extraction - Background Processing
-                    background_mode = False
+                    # 5. Save processed data to PostgreSQL database (if enabled)
+                    if settings.DB_ENABLED:
+                        from functions import db_manager
+                        st.write("Step 5: Saving processed data to PostgreSQL database...")
+                        try:
+                            db_save_success = db_manager.save_processed_data_to_db(analysis_ready_df)
+                            if db_save_success:
+                                st.success(f"Successfully saved {len(analysis_ready_df)} records to PostgreSQL database at {settings.DB_HOST}.")
+                                logger.info(f"Successfully saved {len(analysis_ready_df)} records to database.")
+                            else:
+                                st.warning("Failed to save data to PostgreSQL database. Check logs for details.")
+                                logger.warning("Database save operation returned False.")
+                        except Exception as db_e:
+                            st.error(f"Error saving to database: {db_e}")
+                            logger.error(f"Database save error: {db_e}", exc_info=True)
                     
-                    if settings.DB_ENABLED and llm_enabled and llm_ok:
-                        st.write("Step 2: Starting LLM extraction in background mode...")
-                        background_started = llm_extraction.run_llm_extraction_background(preprocessed_df, batch_id)
-                        
-                        if background_started:
-                            background_mode = True
-                            st.session_state.llm_background_processing = True
-                            st.session_state.preprocessing_complete = True
-                            
-                            st.success(f"""
-                            **Background processing started!** 
-                            
-                            You can now navigate to the Analysis tab while LLM extraction continues in the background.
-                            The Analysis tab will show results as they become available. Processing will continue even if you navigate away.
-                            
-                            Batch ID: {batch_id}
-                            """)
-                            
-                            # Store minimal data in session for quick navigation
-                            if 'extracted_personnel' not in preprocessed_df.columns:
-                                preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                            if 'assigned_personnel' not in preprocessed_df.columns:
-                                preprocessed_df['assigned_personnel'] = [['Unknown']] * len(preprocessed_df)
-                                
-                            # Just store minimum to enable Analysis page navigation
-                            st.session_state.data_processed = True
-                            
-                            logger.info(f"Background processing started with batch ID: {batch_id}")
-                            end_time = time.time()
-                            st.info(f"Initial processing complete in {end_time - start_time:.2f} seconds. LLM extraction continues in background.")
-                            
-                            # Display status from DB
-                            from functions import db_manager
-                            status = db_manager.get_latest_processing_status(batch_id)
-                            st.info(f"Processing status: {status['message']}")
-                            
-                            # Exit early - the rest will happen in background
-                            # Using st.stop() instead of return to properly exit Streamlit flow
-                            st.stop()
-                    
-                    # If background mode failed or is disabled, fall back to synchronous processing
-                    if not background_mode:
-                        # Continue with standard processing flow
-                        if llm_enabled and llm_ok: 
-                            st.write("Step 2: Extracting personnel names using LLM (synchronous mode)...")
-                            llm_processed_df = llm_extraction.run_llm_extraction_parallel(preprocessed_df)
-                            st.session_state.llm_processed_df = llm_processed_df
-                            st.write("LLM extraction finished.")
-                            logger.info("LLM extraction complete.")
-                        else:
-                            st.warning("Skipping LLM extraction (disabled or not ready). Assigning 'Unknown'.")
-                            # Create placeholder columns if skipping LLM
-                            preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                            st.session_state.llm_processed_df = preprocessed_df # Use preprocessed df as base
-                            logger.info("Skipped LLM extraction.")
+                    end_time = time.time()
+                    st.success(f"Pipeline finished successfully in {end_time - start_time:.2f} seconds! Navigate to the 'Analysis' page.")
+                    logger.info(f"Processing pipeline finished in {end_time - start_time:.2f} seconds.")
 
-                        # 3. Normalize Extracted Personnel Names
-                        st.write("Step 3: Normalizing extracted names...")
-                        normalized_df = llm_extraction.normalize_extracted_personnel(st.session_state.llm_processed_df)
-                        st.session_state.normalized_df = normalized_df
-                        st.write("Normalization finished.")
-                        logger.info("Normalization complete.")
-
-                        # Display sample of normalized data
-                        st.write("Sample of data after normalization:")
-                        st.dataframe(normalized_df[['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'assigned_personnel']].head())
-
-                        # 4. Explode by Personnel for Analysis
-                        st.write("Step 4: Preparing data for analysis (exploding by personnel)...")
-                        # Use the 'assigned_personnel' column created by normalization
-                        analysis_ready_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
-                        if analysis_ready_df is None or analysis_ready_df.empty:
-                            st.error("Exploding data failed or resulted in empty data. Check logs.")
-                            st.stop()
-                        st.session_state.analysis_ready_df = analysis_ready_df
-                        st.write(f"Data ready for analysis: {len(analysis_ready_df)} rows after exploding.")
-                        logger.info(f"Explosion complete: {len(analysis_ready_df)} analysis rows.")
-
-                        # Mark processing as complete
-                        st.session_state.data_processed = True
-                        
-                        # 5. Save processed data to PostgreSQL database (if enabled)
-                        if settings.DB_ENABLED:
-                            from functions import db_manager
-                            st.write("Step 5: Saving processed data to PostgreSQL database...")
-                            try:
-                                db_save_success = db_manager.save_processed_data_to_db(analysis_ready_df)
-                                if db_save_success:
-                                    st.success(f"Successfully saved {len(analysis_ready_df)} records to PostgreSQL database at {settings.DB_HOST}.")
-                                    logger.info(f"Successfully saved {len(analysis_ready_df)} records to database.")
-                                else:
-                                    st.warning("Failed to save data to PostgreSQL database. Check logs for details.")
-                                    logger.warning("Database save operation returned False.")
-                            except Exception as db_e:
-                                st.error(f"Error saving to database: {db_e}")
-                                logger.error(f"Database save error: {db_e}", exc_info=True)
-                        
-                        end_time = time.time()
-                        st.success(f"Pipeline finished successfully in {end_time - start_time:.2f} seconds! Navigate to the 'Analysis' page.")
-                        logger.info(f"Processing pipeline finished in {end_time - start_time:.2f} seconds.")
-
-                        # Optional: Show unknown assignments count
-                        unknown_df = analysis_ready_df[analysis_ready_df['personnel'].isin(['Unknown', 'Unknown_Error'])]
-                        if not unknown_df.empty:
-                            st.warning(f"Found {len(unknown_df)} event assignments marked as 'Unknown' or 'Unknown_Error' after processing.")
+                    # Optional: Show unknown assignments count
+                    unknown_df = analysis_ready_df[analysis_ready_df['personnel'].isin(['Unknown', 'Unknown_Error'])]
+                    if not unknown_df.empty:
+                        st.warning(f"Found {len(unknown_df)} event assignments marked as 'Unknown' or 'Unknown_Error' after processing.")
 
                 except Exception as e:
                     st.error(f"An error occurred during processing: {e}")

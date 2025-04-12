@@ -2,6 +2,7 @@
 import logging
 import pandas as pd
 import psycopg2
+import json
 from psycopg2 import sql
 from psycopg2.extras import execute_values
 from config import settings
@@ -58,8 +59,8 @@ def ensure_tables_exist():
     try:
         with conn.cursor() as cursor:
             # Create processed events table if it doesn't exist
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS {} (
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {settings.DB_TABLE_PROCESSED_DATA} (
                     id SERIAL PRIMARY KEY,
                     uid TEXT UNIQUE,
                     summary TEXT,
@@ -75,11 +76,11 @@ def ensure_tables_exist():
                     calendar_file_id INTEGER,
                     processing_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """.format(sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)))
+            """)
             
             # Create personnel config table if it doesn't exist
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS {} (
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {settings.DB_TABLE_PERSONNEL} (
                     id SERIAL PRIMARY KEY,
                     canonical_name TEXT UNIQUE,
                     role TEXT,
@@ -87,11 +88,11 @@ def ensure_tables_exist():
                     variations JSONB,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """.format(sql.Identifier(settings.DB_TABLE_PERSONNEL)))
+            """)
             
-            # Create calendar files table to store raw JSON files - now keeps only the most recent file
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS calendar_files (
+            # Create calendar files table to store raw JSON files - without the problematic constraint
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {settings.DB_TABLE_CALENDAR_FILES} (
                     id SERIAL PRIMARY KEY,
                     filename TEXT,
                     file_content JSONB,
@@ -99,20 +100,43 @@ def ensure_tables_exist():
                     upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     processed BOOLEAN DEFAULT FALSE,
                     batch_id TEXT,
-                    is_current BOOLEAN DEFAULT TRUE,
-                    CONSTRAINT unique_current_file CHECK (
-                        (is_current = FALSE) OR 
-                        (is_current = TRUE AND (SELECT COUNT(*) FROM calendar_files WHERE is_current = TRUE) <= 1)
-                    )
+                    is_current BOOLEAN DEFAULT FALSE
                 )
             """)
             
             # Add an index on the uid field for faster lookups
-            cursor.execute("""
+            cursor.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_processed_events_uid 
-                ON {} (uid)
-            """.format(sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)))
+                ON {settings.DB_TABLE_PROCESSED_DATA} (uid)
+            """)
             
+            # Create a function to enforce the constraint that only one file can be current
+            cursor.execute("""
+                CREATE OR REPLACE FUNCTION enforce_single_current_file()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF NEW.is_current = TRUE THEN
+                        UPDATE calendar_files SET is_current = FALSE WHERE id != NEW.id;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+            """)
+            
+            # Try to create the trigger if it doesn't exist
+            try:
+                cursor.execute("""
+                    CREATE TRIGGER ensure_single_current_file
+                    BEFORE INSERT OR UPDATE ON calendar_files
+                    FOR EACH ROW
+                    WHEN (NEW.is_current = TRUE)
+                    EXECUTE FUNCTION enforce_single_current_file();
+                """)
+            except Exception as e:
+                # If the trigger already exists, this will fail but we can continue
+                logger.info(f"Trigger creation note: {e}")
+                pass
+                
             conn.commit()
             logger.info("Database tables created or already exist")
             return True
@@ -251,15 +275,17 @@ def save_personnel_config_to_db(config_dict):
     try:
         # Create the tables if they don't exist
         ensure_tables_exist()
-        
-        # Prepare data for insertion
+          # Prepare data for insertion
         rows_to_insert = []
         for name, details in config_dict.items():
+            # Convert variations list to JSON string for PostgreSQL JSONB format
+            variations = json.dumps(details.get('variations', []))
+            
             rows_to_insert.append((
                 name,
                 details.get('role', ''),
                 details.get('clinical_pct', 0.0),
-                details.get('variations', [])
+                variations  # Now as a JSON string instead of array
             ))
         
         with conn.cursor() as cursor:
@@ -420,6 +446,7 @@ def save_partial_processed_data(df, batch_id):
         
         # Prepare data for insertion, similar to save_processed_data_to_db
         from functions import config_manager
+        import json
         
         rows_to_insert = []
         for _, row in df.iterrows():
@@ -452,6 +479,9 @@ def save_partial_processed_data(df, batch_id):
             if 'assigned_personnel' in row:
                 status = 'assigned'
             
+            # Serialize nested dicts/lists to JSON string
+            row_json = json.dumps(row_dict)
+            
             rows_to_insert.append((
                 uid,
                 summary,
@@ -461,7 +491,7 @@ def save_partial_processed_data(df, batch_id):
                 personnel,
                 role,
                 clinical_pct,
-                row_dict,
+                row_json,  # Use serialized JSON string instead of raw dict
                 batch_id,
                 status
             ))
@@ -620,8 +650,8 @@ def save_calendar_file_to_db(filename, file_content):
         
         # Check if this exact file has been processed before
         with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT batch_id, processed FROM calendar_files
+            cursor.execute(f"""
+                SELECT batch_id, processed FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE file_hash = %s
                 ORDER BY upload_date DESC
                 LIMIT 1
@@ -648,14 +678,14 @@ def save_calendar_file_to_db(filename, file_content):
         
         # Before inserting, mark all existing calendar files as not current
         with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE calendar_files
+            cursor.execute(f"""
+                UPDATE {settings.DB_TABLE_CALENDAR_FILES}
                 SET is_current = FALSE
             """)
             
             # Now insert the new file as the current one
-            cursor.execute("""
-                INSERT INTO calendar_files
+            cursor.execute(f"""
+                INSERT INTO {settings.DB_TABLE_CALENDAR_FILES}
                 (filename, file_content, file_hash, batch_id, processed, is_current)
                 VALUES (%s, %s, %s, %s, FALSE, TRUE)
                 RETURNING id
@@ -692,8 +722,8 @@ def mark_calendar_file_as_processed(batch_id):
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE calendar_files
+            cursor.execute(f"""
+                UPDATE {settings.DB_TABLE_CALENDAR_FILES}
                 SET processed = TRUE
                 WHERE batch_id = %s
             """, (batch_id,))
@@ -727,9 +757,9 @@ def get_calendar_file_by_batch_id(batch_id):
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT filename, file_content, processed 
-                FROM calendar_files
+                FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE batch_id = %s
                 LIMIT 1
             """, (batch_id,))
@@ -764,9 +794,9 @@ def get_pending_calendar_files():
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT batch_id, filename, file_content
-                FROM calendar_files
+                FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE processed = FALSE
                 ORDER BY upload_date ASC
             """)
@@ -801,9 +831,9 @@ def get_current_calendar_file():
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT id, batch_id, filename, file_content
-                FROM calendar_files
+                FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE is_current = TRUE
                 LIMIT 1
             """)
@@ -852,6 +882,41 @@ def count_unique_events_in_database():
     except Exception as e:
         logger.error(f"Error counting unique events: {e}")
         return 0
+    finally:
+        if conn:
+            conn.close()
+
+def get_processed_events_by_batch(batch_id):
+    """
+    Retrieves processed events from the database for a specific batch.
+    
+    Args:
+        batch_id: The batch ID to filter by
+        
+    Returns:
+        pandas.DataFrame: DataFrame containing the retrieved events, or empty DataFrame if retrieval fails.
+    """
+    conn = get_db_connection()
+    if not conn:
+        logger.warning(f"Could not get database connection to retrieve events for batch {batch_id}")
+        return pd.DataFrame()
+    
+    try:
+        query = f"SELECT * FROM {settings.DB_TABLE_PROCESSED_DATA} WHERE batch_id = %s"
+        
+        # Execute query and fetch results into DataFrame
+        df = pd.read_sql_query(query, conn, params=[batch_id])
+        
+        if not df.empty:
+            logger.info(f"Retrieved {len(df)} events from database for batch {batch_id}")
+        else:
+            logger.warning(f"No events found in database for batch {batch_id}")
+            
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error retrieving events from database for batch {batch_id}: {e}")
+        return pd.DataFrame()
     finally:
         if conn:
             conn.close()

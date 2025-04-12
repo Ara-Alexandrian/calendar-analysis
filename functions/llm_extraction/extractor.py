@@ -17,6 +17,7 @@ from config import settings
 from functions import config_manager
 from .client import get_llm_client, is_llm_ready, restart_ollama_server
 from .utils import get_persistent_progress_bar
+from .smart_router import get_router
 
 try:
     from tqdm import tqdm
@@ -33,13 +34,24 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     Internal function to extract names for a single summary using the LLM.
     Returns list of names on success, or "Unknown" / "Unknown_Error" on failure.
     """
+    if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
+        logger.debug("Skipping extraction for empty or non-string summary.")
+        return ["Unknown"]  # Return list for consistency
+    
+    # If USE_SMART_ROUTER is enabled, use the router for extraction (ignores llm_client)
+    if getattr(settings, "USE_SMART_ROUTER", True):
+        try:
+            router = get_router()
+            return router.extract_personnel(summary, canonical_names)
+        except Exception as e:
+            logger.error(f"Smart router extraction failed: {e}, falling back to direct client")
+            # Fall back to direct client if router fails
+    
+    # Traditional client approach when router is disabled or as fallback
     if not llm_client:
         # Should not happen if called correctly, but safety check
         return "Unknown_Error"
-    if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
-        logger.debug("Skipping extraction for empty or non-string summary.")
-        return ["Unknown"] # Return list for consistency
-
+        
     # Construct the prompt
     prompt = f"""
     Your task is to identify physicist names from the provided calendar event summary.
@@ -55,10 +67,18 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     Event Summary:
     "{summary}"
 
-    Respond ONLY with a valid JSON list containing the identified canonical names found in the summary.
-    Example Response: ["Name1", "Name2"]
-    Example Response (none found): []
-    Do not add explanations or surrounding text. ONLY the JSON list.
+    IMPORTANT: Respond ONLY with a valid JSON array. Do not use any other JSON format.
+    Correct format examples:
+    []
+    ["D. Solis"]
+    ["C. Chu", "D. Solis"]
+
+    Never respond with JSON objects like {{"name": "value"}} or {{"names": [...]}}.
+    Do not add explanations or surrounding text. ONLY the JSON array.
+    """
+
+    Never respond with JSON objects like {{"name": "value"}} or {{"names": [...]}}.
+    Do not add explanations or surrounding text. ONLY the JSON array.
     """
 
     try:
@@ -156,7 +176,7 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
                                     fixed_parts.append(current_part)
                                 
                                 current_part = ""
-                        
+
                         # Build the corrected JSON
                         if fixed_parts:
                             fixed_content = ''.join(fixed_parts)
@@ -537,98 +557,199 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     df_copy['extracted_personnel'] = results
     return df_copy
 
+import os
+import sys
+import time
+import json
+import logging
+import streamlit as st
+
+# Ensure path includes the project root
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if (PROJECT_ROOT not in sys.path):
+    sys.path.insert(0, PROJECT_ROOT)
+
+from config import settings
+from functions import config_manager
+from .client import get_llm_client, is_llm_ready
+
+logger = logging.getLogger(__name__)
+
+def ultra_basic_extraction(df):
+    """
+    Minimal extraction function with no fancy handling, just basic calls.
+    """
+    st.warning("Using ultra-basic extraction method")
+
+    # Copy dataframe to avoid modifying the original
+    df_copy = df.copy()
+
+    # Get names from config
+    _, _, canonical_names = config_manager.get_personnel_details()
+    if not canonical_names:
+        logger.error("Cannot run ultra_basic_extraction: No canonical names found.")
+        st.error("Personnel configuration is empty.")
+        df_copy['extracted_personnel'] = [["Unknown_Error"]] * len(df_copy)
+        return df_copy
+
+    # Get LLM client
+    client = get_llm_client()
+    if not client:
+        logger.error("Cannot run ultra_basic_extraction: Failed to get LLM client.")
+        st.error("Failed to connect to LLM.")
+        df_copy['extracted_personnel'] = [["Unknown_Error"]] * len(df_copy)
+        return df_copy
+
+    # List to store results
+    results = []
+    total_rows = len(df_copy)
+
+    # Progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    status_text.text(f"Starting processing of {total_rows} events...")
+
+    # Process each row
+    for i, row_tuple in enumerate(df_copy.iterrows()):
+        index, data = row_tuple # Get index and data from tuple
+        percent_complete = int(((i + 1) / total_rows) * 100)
+        status_text.text(f"Processing event {i+1} of {total_rows}...")
+
+        summary = data.get('summary', '')
+        logger.info(f"[UltraBasic] Processing event {i+1}/{total_rows} (Index: {index}): {summary[:50]}...")
+
+        if not summary or len(summary.strip()) == 0:
+            logger.warning(f"[UltraBasic] Skipping event {i+1} due to empty summary.")
+            results.append(["Unknown"])
+            progress_bar.progress(percent_complete)
+            continue
+
+        try:
+            prompt = f"""
+            Extract physicist names from this summary: "{summary}"
+            Only return names from this list: {json.dumps(canonical_names)}
+            Format as JSON array. If none found, return empty array.
+            """
+
+            logger.debug(f"[UltraBasic] Calling LLM for event {i+1}...")
+            response = client.chat(
+                model=settings.LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "Extract names, respond with only a JSON array."},
+                    {"role": "user", "content": prompt}
+                ],
+                format="json",
+                options={'timeout': 60} # Add a timeout
+            )
+            logger.debug(f"[UltraBasic] LLM call complete for event {i+1}.")
+
+            content = response.get('message', {}).get('content', '')
+            logger.info(f"[UltraBasic] LLM response for event {i+1}: {content[:100]}")
+
+            if not content:
+                 logger.warning(f"[UltraBasic] Empty content received for event {i+1}")
+                 results.append(["Unknown"])
+                 progress_bar.progress(percent_complete)
+                 time.sleep(0.2) # Small delay even on empty content
+                 continue
+
+            try:
+                extracted_data = json.loads(content)
+                if isinstance(extracted_data, list):
+                    extracted_names = [name for name in extracted_data if name in canonical_names]
+                    if extracted_names:
+                        results.append(extracted_names)
+                        logger.info(f"[UltraBasic] Found names for event {i+1}: {extracted_names}")
+                    else:
+                        results.append(["Unknown"])
+                        logger.info(f"[UltraBasic] No known names found for event {i+1}.")
+                elif isinstance(extracted_data, dict):
+                    found_name = False
+                    for key, value in extracted_data.items():
+                        if isinstance(value, str) and value in canonical_names:
+                            results.append([value])
+                            logger.info(f"[UltraBasic] Found name in dict for event {i+1}: {value}")
+                            found_name = True
+                            break
+                    if not found_name:
+                        results.append(["Unknown"])
+                        logger.info(f"[UltraBasic] No known names found in dict for event {i+1}.")
+                else:
+                    results.append(["Unknown"])
+                    logger.warning(f"[UltraBasic] Unexpected data type from JSON parse for event {i+1}: {type(extracted_data)}")
+            except json.JSONDecodeError as parse_error:
+                logger.error(f"[UltraBasic] Error parsing JSON response for event {i+1}: {parse_error}. Response: {content[:100]}")
+                # Attempt regex fallback as in the main function
+                name_matches = re.findall(r'"([^"]+)"', content)
+                if name_matches:
+                    validated_names = [name for name in name_matches if name in canonical_names]
+                    if validated_names:
+                        logger.info(f"[UltraBasic] Regex fallback extracted for event {i+1}: {validated_names}")
+                        results.append(validated_names)
+                    else:
+                        logger.info(f"[UltraBasic] Regex fallback found no known names for event {i+1}.")
+                        results.append(["Unknown"])
+                else:
+                    results.append(["Unknown_Error"])
+            except Exception as parse_error:
+                logger.error(f"[UltraBasic] Unexpected error parsing response for event {i+1}: {parse_error}")
+                results.append(["Unknown_Error"])
+
+            time.sleep(0.5) # Keep the delay
+
+        except Exception as e:
+            logger.error(f"[UltraBasic] Error during LLM call or processing for event {i+1}: {e}", exc_info=True)
+            results.append(["Unknown_Error"])
+            time.sleep(1)  # Longer delay after error
+            # Try to get a new client instance in case the old one is stuck
+            logger.warning("[UltraBasic] Attempting to refresh LLM client after error.")
+            client = get_llm_client()
+            if not client:
+                 logger.error("[UltraBasic] Failed to refresh LLM client. Stopping extraction.")
+                 st.error("LLM connection lost. Processing stopped.")
+                 # Fill remaining results with error
+                 remaining_count = total_rows - len(results)
+                 results.extend([["Unknown_Error"]] * remaining_count)
+                 break # Exit the loop if client cannot be refreshed
+
+        # Update progress bar at the end of the loop iteration
+        progress_bar.progress(percent_complete)
+
+    # Ensure results list matches dataframe length
+    if len(results) < total_rows:
+        logger.warning(f"[UltraBasic] Results list length ({len(results)}) doesn't match DataFrame length ({total_rows}). Appending errors.")
+        results.extend([["Unknown_Error"]] * (total_rows - len(results)))
+    elif len(results) > total_rows:
+        logger.warning(f"[UltraBasic] Results list length ({len(results)}) exceeds DataFrame length ({total_rows}). Truncating.")
+        results = results[:total_rows]
+
+    progress_bar.progress(100)
+    status_text.text(f"Processing complete! Processed {len(results)} events.")
+
+    df_copy['extracted_personnel'] = results
+    logger.info(f"[UltraBasic] Finished extraction. Returning DataFrame with {len(df_copy)} rows.")
+
+    return df_copy
+
 def run_llm_extraction_sequential(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Runs LLM extraction sequentially (one at a time) as a fallback when parallel extraction fails.
-    This is slower but more reliable when there are connection issues.
+    Runs LLM extraction sequentially on the 'summary' column of the DataFrame.
+    This is a more reliable but slower alternative to the parallel version.
+
+    Args:
+        df: DataFrame with a 'summary' column.
+
+    Returns:
+        DataFrame with a new 'extracted_personnel' column containing lists of names
+        or error strings ('Unknown', 'Unknown_Error').
     """
-    logger.info("Starting sequential LLM extraction as fallback method...")
-    st.info("Processing events one at a time for reliability (this may take longer)...")
-    
-    df_copy = df.copy()
-    df_copy['summary'] = df_copy['summary'].fillna('') # Ensure no NaN summaries
-    summaries = df_copy['summary'].tolist()
-    
-    # Get client and names
-    llm_client = get_llm_client()
-    _, _, canonical_names = config_manager.get_personnel_details()
-    
-    # Create a progress bar and persistent terminal progress bar
-    progress_bar = st.progress(0, text="Starting sequential extraction...")
-    term_progress = get_persistent_progress_bar(len(summaries), "Sequential LLM Extraction")
-    
-    # Initialize results list with Unknown placeholders
-    results = [["Unknown"]] * len(summaries)
-    
-    start_time = time.time()
-    successful = 0
-    errors = 0
-    
-    # Process each summary one at a time with individual timeouts
-    for i, summary in enumerate(summaries):
-        try:
-            # Check if we need to restart Ollama server (every 100 items)
-            if i > 0 and i % 100 == 0:
-                logger.info(f"Processed {i} items, checking if Ollama server needs to be restarted...")
-                # First try refreshing the client connection
-                llm_client = get_llm_client()
-                
-                # If we've had multiple errors, restart the Ollama server
-                if errors > 5:
-                    logger.warning(f"Detected {errors} errors in the last batch. Attempting to restart Ollama server...")
-                    # Try to restart the Ollama server
-                    restart_success = restart_ollama_server()
-                    if restart_success:
-                        logger.info("Ollama server restarted successfully. Continuing extraction...")
-                        llm_client = get_llm_client()  # Get a fresh client
-                        errors = 0  # Reset error count
-                        st.warning("Ollama server was automatically restarted to improve performance")
-                    else:
-                        logger.error("Failed to restart Ollama server. Continuing with current client...")
-                
-            # Process with a more conservative timeout and retry mechanism
-            result = extract_personnel_with_llm(summary, llm_client, canonical_names, retry_count=1)
-            results[i] = result
-            successful += 1
-            
-            # Log progress occasionally
-            if i % 50 == 0 or i == len(summaries) - 1:
-                logger.info(f"Sequential extraction progress: {i+1}/{len(summaries)} items processed")
-                
-            # Update progress bars
-            term_progress.update(1)  # Update the terminal progress bar
-            progress_percent = int(((i + 1) / len(summaries)) * 100)
-            progress_bar.progress(progress_percent, text=f"Processing event {i+1}/{len(summaries)}...")
-            
-        except Exception as e:
-            logger.error(f"Error in sequential extraction for index {i}: {e}")
-            results[i] = ["Unknown_Error"]
-            errors += 1
-            
-            # If we see too many consecutive errors, refresh the client
-            if errors > 10:
-                logger.warning("Too many consecutive errors, refreshing LLM client")
-                try:
-                    llm_client = get_llm_client()
-                    errors = 0  # Reset error count
-                except Exception as client_error:
-                    logger.error(f"Failed to refresh client: {client_error}")
-                    
-    end_time = time.time()
-    elapsed = end_time - start_time
-    
-    logger.info(f"Sequential extraction completed in {elapsed:.2f} seconds. {successful} successful, {errors} errors.")
-    st.success(f"LLM extraction completed. {successful} events processed successfully, {errors} errors.")
-    
-    term_progress.close()  # Close the terminal progress bar
-    df_copy['extracted_personnel'] = results
-    return df_copy
+    # Return the ultra_basic_extraction implementation which does sequential processing
+    return ultra_basic_extraction(df)
 
 def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
     """
     Runs LLM extraction in the background, saving partial results to the database.
-    This version doesn't use Streamlit progress bars and is designed to be run
-    in a separate thread.
+    This is a simplified version that processes items sequentially for reliability.
 
     Args:
         df: DataFrame containing a 'summary' column
@@ -687,8 +808,7 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
             # Create a persistent terminal progress bar for the background process
             term_progress = get_persistent_progress_bar(len(summaries), f"Background LLM Extraction (Batch {batch_id})")
             
-            # Update LLM client and get latest canonical names when thread starts
-            # This ensures we're not using stale connections
+            # Get a fresh LLM client for this thread
             thread_llm_client = get_llm_client()
             _, _, thread_canonical_names = config_manager.get_personnel_details()
             
@@ -697,137 +817,105 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                 term_progress.close()
                 return
                 
-            # Process in batches to save intermediate results
-            batch_size = 10  # Process 10 summaries at a time
+            # Process in small batches with simple sequential processing
+            batch_size = 5  # Process 5 summaries at a time
+            save_frequency = 10  # Save results to DB every 10 items
             
-            for i in range(0, len(summaries), batch_size):
-                # Check if we need to reload the data from the database (if DB enabled)
-                # This happens if the thread has been running a while and the app was restarted
-                if settings.DB_ENABLED and i > 0 and i % 50 == 0:
-                    try:
-                        # Check if the calendar file still exists in the database
-                        filename, file_content, processed = db_manager.get_calendar_file_by_batch_id(batch_id)
-                        if not filename or processed:
-                            logger.info(f"Calendar file for batch {batch_id} marked as processed or no longer exists. Stopping background process.")
-                            term_progress.close()
-                            return
-                        
-                        # Reload state from database
-                        latest_status = db_manager.get_latest_processing_status(batch_id)
-                        if latest_status['status'] == 'complete':
-                            logger.info(f"Batch {batch_id} already marked as complete in database. Stopping background process.")
-                            term_progress.close()
-                            return
-                    except Exception as e:
-                        logger.error(f"Error checking calendar file status: {e}")
-                        # Continue processing anyway
-                
-                batch_indices = range(i, min(i+batch_size, len(summaries)))
-                batch_summaries = [summaries[j] for j in batch_indices]
-                
-                logger.info(f"Processing batch {i//batch_size + 1}/{(len(summaries)-1)//batch_size + 1} for batch_id {batch_id}")
-                
-                # Process this batch of summaries
-                error_count = 0
-                batch_results = []
-                
-                # Check if we need to restart the Ollama server
-                # Restart after processing 100 events or if we have consecutive errors
-                if i > 0 and (i % 100 == 0 or error_count > 5):
-                    logger.info(f"Checking if Ollama server needs restart after processing {i} events...")
-                    # Try to restart the Ollama server
-                    restart_success = restart_ollama_server()
-                    if restart_success:
-                        thread_llm_client = get_llm_client()  # Get a fresh client after restart
-                        error_count = 0  # Reset error count
-                        logger.info(f"Successfully restarted Ollama server at batch position {i}")
-                    else:
-                        logger.warning(f"Failed to restart Ollama server, continuing with current client")
-                
-                for summary in batch_summaries:
-                    try:
-                        result = extract_personnel_with_llm(summary, thread_llm_client, thread_canonical_names)
-                        batch_results.append(result)
-                        term_progress.update(1)  # Update terminal progress
-                    except Exception as exc:
-                        logger.error(f"Error processing summary '{summary[:30]}...': {exc}")
-                        batch_results.append(["Unknown_Error"])
-                        error_count += 1
-                        term_progress.update(1)  # Still update progress even on error
-                        # Reload LLM client if we got an error
+            # Track progress
+            processed_count = 0
+            error_count = 0
+            
+            # Process one summary at a time for reliability
+            for i, summary in enumerate(summaries):
+                try:
+                    logger.info(f"Processing summary {i+1}/{len(summaries)}: '{summary[:50]}...'")
+
+                    # Refresh the client connection every 100 items
+                    if i > 0 and i % 100 == 0:
+                        logger.info(f"Refreshing LLM client after processing {i} items...")
                         thread_llm_client = get_llm_client()
-                
-                # Update the dataframe with results for this batch
-                for idx, j in enumerate(batch_indices):
-                    df_copy.loc[j, 'extracted_personnel'] = batch_results[idx]
-                
-                # Save partial results to database (if DB enabled)
-                if settings.DB_ENABLED:
-                    batch_df = df_copy.iloc[batch_indices].copy()
-                    db_manager.save_partial_processed_data(batch_df, batch_id)
-                else:
-                    # Update progress in session state for non-DB mode
-                    processed_count = min(i + batch_size, len(summaries))
+
+                    # Extract personnel from the summary
+                    result = extract_personnel_with_llm(summary, thread_llm_client, thread_canonical_names)
+                    df_copy.loc[i, 'extracted_personnel'] = result
+                    df_copy.loc[i, 'processing_status'] = 'extracted'
+
+                    # Save progress every 10 items
+                    if i > 0 and i % save_frequency == 0:
+                        if settings.DB_ENABLED:
+                            batch_df = df_copy.iloc[max(0, i - save_frequency):i+1].copy()
+                            db_manager.save_partial_processed_data(batch_df, batch_id)
+                            logger.info(f"Saved progress for items {max(0, i - save_frequency)}-{i}.")
+
+                    # Update progress tracking
+                    processed_count += 1
+                    term_progress.update(1)
                     progress = processed_count / len(summaries)
-                    
-                    if hasattr(st.session_state, 'background_processed_data') and batch_id in st.session_state.background_processed_data:
-                        st.session_state.background_processed_data[batch_id].update({
-                            'progress': progress,
-                            'message': f"Processed {processed_count}/{len(summaries)} events ({progress*100:.1f}%)",
-                            'timestamp': time.time(),
-                            'processed_events': processed_count
-                        })
-                
-                # Sleep briefly to avoid overloading
-                time.sleep(0.1)
+                    logger.info(f"Progress: {processed_count}/{len(summaries)} ({progress*100:.2f}%)")
+
+                    # Add a small delay to avoid overwhelming the server
+                    time.sleep(0.2)
+
+                except Exception as e:
+                    logger.error(f"Error processing summary {i+1}/{len(summaries)}: {e}")
+                    df_copy.loc[i, 'extracted_personnel'] = ["Unknown_Error"]
+                    error_count += 1
+
+                    # Refresh the client after multiple errors
+                    if error_count > 5:
+                        logger.warning(f"Encountered {error_count} errors. Refreshing LLM client...")
+                        thread_llm_client = get_llm_client()
+                        error_count = 0
+                        time.sleep(2)  # Longer delay after multiple errors
+                    else:
+                        time.sleep(0.5)  # Brief delay after an error
+            
+            # After all individual processing is done, save final results
+            if settings.DB_ENABLED:
+                logger.info(f"Saving final results for batch {batch_id}")
+                db_manager.save_partial_processed_data(df_copy, batch_id)
             
             # Import normalizer module for the next step
             from .normalizer import normalize_extracted_personnel
             
             # Normalize the extracted personnel
             logger.info(f"Normalizing extracted names for batch {batch_id}")
-            normalized_df = normalize_extracted_personnel(df_copy)
-            
-            # Save final normalized results (if DB enabled)
-            if settings.DB_ENABLED:
-                db_manager.save_partial_processed_data(normalized_df, batch_id)
+            try:
+                normalized_df = normalize_extracted_personnel(df_copy)
                 
-                # Explode by personnel for final analysis-ready data
-                from functions import data_processor
-                logger.info(f"Exploding by personnel for batch {batch_id}")
-                try:
+                # Save final normalized results
+                if settings.DB_ENABLED:
+                    db_manager.save_partial_processed_data(normalized_df, batch_id)
+                    
+                    # Explode by personnel for final analysis-ready data
+                    from functions import data_processor
+                    logger.info(f"Exploding by personnel for batch {batch_id}")
                     analysis_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
                     db_manager.save_processed_data_to_db(analysis_df, batch_id)
-                    logger.info(f"Background processing complete for batch {batch_id}")
                     
                     # Mark the calendar file as processed
                     db_manager.mark_calendar_file_as_processed(batch_id)
-                except Exception as e:
-                    logger.error(f"Error in final explode/save for batch {batch_id}: {e}")
+                else:
+                    # Store results in session state for non-DB mode
+                    from functions import data_processor
+                    analysis_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
                     
-            # If DB is disabled, store results in a global variable that can be accessed by the Analysis page
-            else:
-                # Store the final normalized and exploded data in a global variable
-                from functions import data_processor
-                logger.info(f"Exploding by personnel for batch {batch_id}")
-                analysis_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
+                    if hasattr(st.session_state, 'background_processed_data'):
+                        st.session_state.background_processed_data[batch_id] = {
+                            'normalized_df': normalized_df,
+                            'analysis_df': analysis_df,
+                            'status': 'complete',
+                            'progress': 1.0,
+                            'message': f"Processing complete: {len(analysis_df)} events processed",
+                            'timestamp': time.time(),
+                            'total_events': len(summaries),
+                            'processed_events': len(summaries)
+                        }
                 
-                # Store in session state-like global variable
-                if not hasattr(st.session_state, 'background_processed_data'):
-                    st.session_state.background_processed_data = {}
+                logger.info(f"Background processing complete for batch {batch_id}")
                 
-                st.session_state.background_processed_data[batch_id] = {
-                    'normalized_df': normalized_df,
-                    'analysis_df': analysis_df,
-                    'status': 'complete',
-                    'progress': 1.0,
-                    'message': f"Processing complete: {len(analysis_df)} events processed",
-                    'timestamp': time.time(),
-                    'total_events': len(summaries),
-                    'processed_events': len(summaries)
-                }
-                
-                logger.info(f"Background processing complete for batch {batch_id} (stored in session state)")
+            except Exception as e:
+                logger.error(f"Error during final processing steps for batch {batch_id}: {e}")
             
             term_progress.close()  # Close the terminal progress bar when complete
         

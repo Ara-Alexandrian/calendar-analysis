@@ -22,6 +22,31 @@ PERSONNEL_CONFIG_JSON_PATH = os.path.join(CONFIG_DIR, 'personnel_config.json') #
 PROCESSED_EXPORT_PATH = os.path.join(OUTPUT_DIR, 'processed_events_export.json') # Optional export
 LOG_FILE = os.path.join(OUTPUT_DIR, 'calendar_analysis.log')
 
+# --- LLM Configuration ---
+# LLM provider can be "ollama" or "mcp" 
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")
+# Model name to use with the LLM provider
+LLM_MODEL = os.environ.get("LLM_MODEL", "llama3")
+# Ollama-specific settings (Unraid server with 2x3090 NVLink)
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://192.168.1.5:11434")
+# MCP-specific settings (Local PC with 4090)
+MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
+MCP_REQUEST_TIMEOUT = int(os.environ.get("MCP_REQUEST_TIMEOUT", "60"))
+MCP_MODEL_NAME = os.environ.get("MCP_MODEL_NAME", "microsoft/phi-2")  # Default model for MCP server
+
+# --- Smart Router Configuration ---
+# Enable multi-provider support for using both Ollama and MCP simultaneously
+ENABLE_MULTI_PROVIDER = os.environ.get("ENABLE_MULTI_PROVIDER", "True").lower() in ["true", "1", "yes"]
+# Enable the smart router for automatic provider selection
+USE_SMART_ROUTER = os.environ.get("USE_SMART_ROUTER", "True").lower() in ["true", "1", "yes"]
+# Router strategy - options: "balanced", "performance", "reliability"
+ROUTER_STRATEGY = os.environ.get("ROUTER_STRATEGY", "balanced")
+# Large model threshold in billions of parameters - models above this use Ollama with more VRAM
+LARGE_MODEL_THRESHOLD = int(os.environ.get("LARGE_MODEL_THRESHOLD", "13"))
+
+# Extraction performance settings
+LLM_MAX_WORKERS = int(os.environ.get("LLM_MAX_WORKERS", "3"))
+
 # --- Ensure Output Directory Exists ---
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -37,11 +62,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 #   - tqdm: Optional for progress bars in CLI mode
 #   - psycopg2-binary: Required for PostgreSQL database connection
 
-# --- LLM Configuration ---
-LLM_PROVIDER = "ollama" # Options: "ollama", None
-OLLAMA_BASE_URL = "http://192.168.1.5:11434" # Required if LLM_PROVIDER is "ollama"
-LLM_MODEL = "mistral:latest" # Switching to a faster model with good name extraction capabilities
-
 # --- Database Configuration ---
 DB_ENABLED = True  # Enable database persistence
 DB_HOST = "192.168.1.50"
@@ -51,6 +71,7 @@ DB_USER = "spc_physics"
 DB_PASSWORD = "!Physics314"  # Make sure there are no hidden/whitespace characters
 DB_TABLE_PROCESSED_DATA = "processed_events"
 DB_TABLE_PERSONNEL = "personnel_config"
+DB_TABLE_CALENDAR_FILES = "calendar_files"  # Adding this setting for consistency
 
 # --- Performance Configuration ---
 LLM_MAX_WORKERS = 10 # Parallel threads for LLM extraction
