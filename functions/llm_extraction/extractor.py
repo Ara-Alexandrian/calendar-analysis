@@ -77,10 +77,6 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     Do not add explanations or surrounding text. ONLY the JSON array.
     """
 
-    Never respond with JSON objects like {{"name": "value"}} or {{"names": [...]}}.
-    Do not add explanations or surrounding text. ONLY the JSON array.
-    """
-
     try:
         # Add timeout to prevent hanging indefinitely
         start_time = time.time()

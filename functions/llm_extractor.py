@@ -1,58 +1,72 @@
-# functions/llm_extractor.py
 """
-LLM extraction module for extracting personnel information from calendar events.
-DEPRECATED: This module is kept for backward compatibility.
-Please use the functions from the llm_extraction package instead.
+Simplified LLM extractor module for Calendar Analysis.
+This version only uses Ollama for personnel extraction from calendar events.
 """
-
 import logging
-import sys
-import warnings
+import pandas as pd
+from typing import List, Dict, Any, Optional
+
+# Import from our simplified Ollama client
+from functions.llm_extraction.ollama_client import is_ollama_ready, extract_personnel
+
+# Import settings
+from config import settings
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Show a deprecation warning
-warnings.warn(
-    "This module is deprecated and will be removed in a future version. "
-    "Please use 'from functions.llm_extraction import ...' instead.",
-    DeprecationWarning, 
-    stacklevel=2
-)
-
-# Import and re-export all the functions from the llm_extraction package
-from functions.llm_extraction import (
-    # Client functions
-    get_llm_client,
-    is_llm_ready,
-    restart_ollama_server,
+def is_llm_ready() -> bool:
+    """
+    Check if the LLM service is ready to use.
     
-    # Extraction functions
-    extract_personnel_with_llm,
-    run_llm_extraction_parallel,
-    run_llm_extraction_sequential,
-    run_llm_extraction_background,
-    
-    # Normalization functions
-    normalize_extracted_personnel,
-    
-    # Constants
-    OLLAMA_AVAILABLE,
-    TQDM_AVAILABLE
-)
+    Returns:
+        bool: True if the service is ready, False otherwise
+    """
+    return is_ollama_ready()
 
-# Export all imported names
-__all__ = [
-    'get_llm_client',
-    'is_llm_ready',
-    'restart_ollama_server',
-    'extract_personnel_with_llm',
-    'run_llm_extraction_parallel',
-    'run_llm_extraction_sequential',
-    'run_llm_extraction_background',
-    'normalize_extracted_personnel',
-    'OLLAMA_AVAILABLE',
-    'TQDM_AVAILABLE'
-]
-
-logger.info("llm_extractor.py is deprecated. Using the new modular implementation from llm_extraction package.")
+def process_events_with_llm(events_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Process calendar events with LLM to extract personnel names.
+    
+    Args:
+        events_df: DataFrame containing calendar events with 'summary' column
+        
+    Returns:
+        pd.DataFrame: DataFrame with added 'extracted_personnel' column
+    """
+    if not is_llm_ready():
+        logger.warning("Ollama service not available, skipping extraction")
+        # Add an empty extraction column
+        events_df['extracted_personnel'] = [["Unknown"]] * len(events_df)
+        return events_df
+    
+    # Load the list of canonical personnel names
+    # This is used to help the LLM identify known personnel
+    try:
+        from functions import config_manager
+        _, _, canonical_names = config_manager.load_personnel_config()
+    except Exception as e:
+        logger.error(f"Error loading personnel config: {e}")
+        canonical_names = []
+    
+    # Process each event
+    extracted_personnel_list = []
+    for idx, row in events_df.iterrows():
+        summary = row.get('summary', '')
+        
+        if not summary:
+            extracted_personnel_list.append(["Unknown"])
+            continue
+        
+        try:
+            # Extract personnel using our simplified Ollama client
+            personnel = extract_personnel(summary, canonical_names)
+            extracted_personnel_list.append(personnel)
+        except Exception as e:
+            logger.error(f"Error extracting personnel for event {idx}: {e}")
+            extracted_personnel_list.append(["Unknown_Error"])
+    
+    # Add the extracted personnel to the DataFrame
+    events_df['extracted_personnel'] = extracted_personnel_list
+    
+    return events_df

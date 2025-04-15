@@ -14,7 +14,7 @@ if PROJECT_ROOT not in sys.path:
 # Import and reload modules to ensure latest changes
 from functions import data_processor
 import functions.llm_extraction as llm_extraction
-importlib.reload(llm_extraction)  # Force reload to get latest changes
+from functions.llm_extraction.client import is_llm_ready
 from functions import config_manager # Needed to check config status
 from config import settings # For LLM provider check
 import functions.db_manager as db_manager
@@ -90,7 +90,7 @@ if st.session_state.get('raw_df') is not None:
     llm_ok = True
     llm_enabled = settings.LLM_PROVIDER and settings.LLM_PROVIDER.lower() != 'none'
     if llm_enabled:
-        if not llm_extraction.is_llm_ready():
+        if not is_llm_ready():
             if not llm_extraction.OLLAMA_AVAILABLE:
                 st.error("""
                 **Ollama library is not installed.** This is required for LLM extraction.
@@ -136,28 +136,26 @@ if st.session_state.get('raw_df') is not None:
                         st.stop()
                     st.session_state.preprocessed_df = preprocessed_df
                     st.write(f"Preprocessing done: {len(preprocessed_df)} events remaining.")
-                    logger.info(f"Preprocessing complete: {len(preprocessed_df)} events.")
-
-                    # Generate a unique batch ID for this processing job
+                    logger.info(f"Preprocessing complete: {len(preprocessed_df)} events.")                    # Generate a unique batch ID for this processing job
                     import uuid
                     batch_id = f"batch_{uuid.uuid4().hex[:8]}_{int(time.time())}"
                     st.session_state.current_batch_id = batch_id
-                      # 2. LLM Extraction - Using Smart GPU-Optimized Processing
-                    if llm_enabled and llm_ok: 
+                    # 2. LLM Extraction - Using Smart GPU-Optimized Processing
+                    if llm_enabled and llm_ok:
                         st.write("Step 2: Extracting personnel names using optimized dual-GPU LLM extraction...")
-                        progress_container = st.empty()
-                        with progress_container.container():
-                            with st.spinner("Optimized LLM extraction in progress - leveraging dual RTX 3090s and RTX 4090..."):
-                                try:
-                                    # Try the new smart extractor first
-                                    llm_processed_df = llm_extraction.run_smart_extraction(preprocessed_df)
-                                    st.session_state.llm_processed_df = llm_processed_df
-                                except Exception as e:
-                                    logger.warning(f"Smart extraction failed: {e}. Falling back to standard extraction.")
-                                    st.warning("Optimized extraction encountered an issue. Falling back to standard extraction.")
-                                    # Fall back to sequential extraction if smart extraction fails
-                                    llm_processed_df = llm_extraction.run_llm_extraction_sequential(preprocessed_df)
-                                    st.session_state.llm_processed_df = llm_processed_df
+                        # Create a more direct progress interface without nested containers
+                        st.write("Optimized LLM extraction in progress - leveraging dual RTX 3090s and RTX 4090...")
+                        try:
+                            # Try the new smart extractor first - use the direct Streamlit context
+                            # Avoid nesting in containers which can prevent UI updates
+                            llm_processed_df = llm_extraction.run_smart_extraction(preprocessed_df)
+                            st.session_state.llm_processed_df = llm_processed_df
+                        except Exception as e:
+                            logger.warning(f"Smart extraction failed: {e}. Falling back to standard extraction.")
+                            st.warning("Optimized extraction encountered an issue. Falling back to standard extraction.")
+                            # Fall back to sequential extraction if smart extraction fails
+                            llm_processed_df = llm_extraction.run_llm_extraction_sequential(preprocessed_df)
+                            st.session_state.llm_processed_df = llm_processed_df
                         st.write("LLM extraction finished.")
                         logger.info("LLM extraction complete.")
                     else:

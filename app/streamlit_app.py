@@ -1,113 +1,125 @@
-# streamlit_app.py
+"""
+Calendar Workload Analyzer - Main Streamlit Application
+This is the main entry point for the Streamlit application.
+"""
 import streamlit as st
-import logging
-import os
-
-# --- Path Setup & Early Init ---
-# Add project root to sys.path BEFORE importing local modules
 import sys
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up one level to get to the root
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-# --- End Path Setup ---
+import os
+import logging
+from pathlib import Path
 
-from config import settings # Import static settings
-from functions import config_manager # Import manager to load config early if needed
+# Add imports for debugging
+import traceback
 
-# --- Configure logging ---
-# Ensure log directory exists
-os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
-# Clear existing handlers if any (important for Streamlit re-runs)
-for handler in logging.root.handlers[:]:
-    logging.root.removeHandler(handler)
+# Explicitly add the project root to the Python path
+# This should ensure the config module is found
+try:
+    # Calculate the project root path
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    
+    # Add to path if not already there
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    
+    # Import settings and configure logging
+    from config import settings
+except Exception as e:
+    st.error(f"Error importing modules: {e}")
+    st.code(traceback.format_exc())
+    # Continue with default settings to avoid crashing completely
+    class DefaultSettings:
+        APP_TITLE = "Calendar Workload Analyzer"
+        LOGGING_LEVEL = logging.INFO
+        LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        LOG_FILE = "calendar_analysis.log"
+        PROJECT_ROOT = project_root
+        OUTPUT_DIR = os.path.join(project_root, "output")
+        OLLAMA_BASE_URL = "http://localhost:11434"
+        LLM_PROVIDER = "ollama"
+        LLM_MODEL = "mistral:latest"
+        DB_ENABLED = False
+    
+    settings = DefaultSettings()
+    st.warning("Using default settings due to import error. Some features may be limited.")
 
-# Set up console handler with UTF-8 encoding
-console_handler = logging.StreamHandler()
-# Set encoding for FileHandler to UTF-8 explicitly
-file_handler = logging.FileHandler(settings.LOG_FILE, encoding='utf-8')
-
-# Configure formatter
-formatter = logging.Formatter(settings.LOG_FORMAT)
-console_handler.setFormatter(formatter)
-file_handler.setFormatter(formatter)
-
-# Set up basic config with these handlers
+# Configure logging
 logging.basicConfig(
     level=settings.LOGGING_LEVEL,
-    handlers=[file_handler, console_handler]
+    format=settings.LOG_FORMAT,
+    handlers=[
+        logging.FileHandler(settings.LOG_FILE),
+        logging.StreamHandler()
+    ]
 )
-logger = logging.getLogger(__name__)
-# --- End Logging Config ---
 
-# --- Page Configuration (Must be the first Streamlit command) ---
+logger = logging.getLogger(__name__)
+logger.info("Starting Calendar Workload Analyzer application")
+
+# Set page configuration
 st.set_page_config(
     page_title=settings.APP_TITLE,
     page_icon="📅",
-    layout="wide", # Use wide layout
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- Initialize Session State ---
-# Check and initialize keys needed across pages if they don't exist
-# Raw data from upload
-if 'raw_df' not in st.session_state:
-    st.session_state.raw_df = None
-# Data after basic preprocessing (dates, duration)
-if 'preprocessed_df' not in st.session_state:
-    st.session_state.preprocessed_df = None
-# Data after LLM extraction (includes 'extracted_personnel')
-if 'llm_processed_df' not in st.session_state:
-    st.session_state.llm_processed_df = None
-# Data after normalization (includes 'assigned_personnel' list)
-if 'normalized_df' not in st.session_state:
-    st.session_state.normalized_df = None
-# Final data, exploded by personnel, ready for analysis
-if 'analysis_ready_df' not in st.session_state:
-    st.session_state.analysis_ready_df = None
-# Flag to indicate if data has been successfully processed
-if 'data_processed' not in st.session_state:
-    st.session_state.data_processed = False
-# Store the filename of the uploaded file
+# Initialize session state variables for persistent storage across pages
 if 'uploaded_filename' not in st.session_state:
     st.session_state.uploaded_filename = None
-# Store personnel config (loaded once or when refreshed)
-if 'personnel_config' not in st.session_state:
-     # Load initial config into session state
-     p_config, v_map, c_names = config_manager.load_personnel_config()
-     st.session_state.personnel_config = p_config
-     st.session_state.variation_map = v_map
-     st.session_state.canonical_names = c_names
-     logger.info("Initial personnel config loaded into session state.")
-
-
-# --- Main App Display ---
+if 'raw_df' not in st.session_state:
+    st.session_state.raw_df = None
+if 'data_processed' not in st.session_state:
+    st.session_state.data_processed = False
+if 'preprocessed_df' not in st.session_state:
+    st.session_state.preprocessed_df = None
+if 'llm_processed_df' not in st.session_state:
+    st.session_state.llm_processed_df = None
+if 'normalized_df' not in st.session_state:
+    st.session_state.normalized_df = None
+if 'analysis_ready_df' not in st.session_state:
+    st.session_state.analysis_ready_df = None
+if 'current_batch_id' not in st.session_state:
+    st.session_state.current_batch_id = None
+    
+# Main app header
 st.title(f"📅 {settings.APP_TITLE}")
 
+# Welcome message on the main page
 st.markdown("""
-Welcome to the Calendar Workload Analyzer.
+## Welcome to the Calendar Workload Analyzer
 
-Use the sidebar to navigate between pages:
-1.  **📁 Upload & Process:** Upload your `calendar.json` file and run the processing pipeline (including LLM extraction).
-2.  **📊 Analysis:** Explore the processed data with interactive filters and visualizations.
-3.  **⚙️ Admin:** View and manage the personnel configuration used for analysis.
+This application helps you analyze calendar data to understand workload distribution across your team.
 
-**Status:**
-""")
+### Getting Started:
+1. 📁 Navigate to the **Upload & Process** page to upload your calendar data
+2. 📊 Use the **Analysis** page to explore the processed data
+3. ⚙️ Visit the **Admin** page to configure personnel settings
+4. 🔍 Use the **Database Viewer** if you want to explore the raw data (when database is enabled)
 
-# Display current data status
-if st.session_state.data_processed and st.session_state.analysis_ready_df is not None:
-     st.success(f"Data from '{st.session_state.uploaded_filename}' is processed and ready for analysis ({len(st.session_state.analysis_ready_df)} analysis rows). Navigate to the 'Analysis' page.")
-elif st.session_state.raw_df is not None:
-     st.warning(f"Raw data from '{st.session_state.uploaded_filename}' is loaded but not yet processed. Go to the 'Upload & Process' page.")
-else:
-     st.info("No data loaded. Please go to the 'Upload & Process' page to begin.")
+### Current Configuration:
+- LLM Provider: {0}
+- LLM Model: {1}
+- Database Enabled: {2}
+""".format(
+    settings.LLM_PROVIDER, 
+    settings.LLM_MODEL,
+    "Yes" if settings.DB_ENABLED else "No"
+))
 
-# Optionally display loaded personnel count
-st.markdown(f"**Personnel Configured:** {len(st.session_state.canonical_names)} names loaded.")
+# Display system information
+with st.expander("System Information"):
+    st.write(f"Project Root: {settings.PROJECT_ROOT}")
+    st.write(f"Output Directory: {settings.OUTPUT_DIR}")
+    st.write(f"Ollama Base URL: {settings.OLLAMA_BASE_URL}")
+    
+    # Check if Ollama is available
+    try:
+        from functions.llm_extraction.ollama_client import is_ollama_ready
+        ollama_status = is_ollama_ready()
+        st.write(f"Ollama Connection: {'✅ Connected' if ollama_status else '❌ Not Connected'}")
+    except Exception as e:
+        st.write(f"Ollama Connection: ❌ Error checking connection - {str(e)}")
 
-st.sidebar.success("Select a page above.")
-
-logger.info("Streamlit main page executed.")
-
-# Note: The actual logic for each page is in the files within the 'pages/' directory.
-# Streamlit automatically discovers and runs them based on the file structure.
+# Footer
+st.markdown("---")
+st.markdown("© 2025 Calendar Workload Analyzer")

@@ -198,45 +198,21 @@ def is_llm_ready():
     Returns:
         bool: True if the LLM service is ready, False otherwise
     """
-    llm_provider = getattr(settings, "LLM_PROVIDER", "ollama").lower()
-    
-    if llm_provider == "ollama":
-        if not OLLAMA_AVAILABLE:
-            logger.error("Ollama library not installed. LLM service not available.")
+    # For the simplified branch - direct Ollama check only
+    try:
+        # Use the exact URL from settings for the check
+        base_url = settings.OLLAMA_BASE_URL.rstrip('/')
+        check_url = f"{base_url}/"
+        
+        logger.debug(f"Checking Ollama connection at: {check_url}")
+          # Simple HTTP check to verify server is responding
+        response = requests.get(check_url, timeout=5)
+        if response.status_code == 200:
+            logger.info(f"Ollama server is responding at {check_url}")
+            return True
+        else:
+            logger.error(f"Ollama server returned status code {response.status_code}")
             return False
-            
-        try:
-            # Parse the base URL to get host and port
-            parsed_url = urlparse(settings.OLLAMA_BASE_URL)
-            host = parsed_url.hostname or "localhost"
-            port = parsed_url.port or 11434
-            
-            # Check the Ollama health endpoint
-            check_url = f"http://{host}:{port}/api/health"
-            response = requests.get(check_url, timeout=5)
-            if response.status_code == 200:
-                logger.debug("Ollama server is ready")
-                return True
-            else:
-                logger.error(f"Ollama server health check failed with status code: {response.status_code}")
-                return False
-        except Exception as e:
-            logger.error(f"Error checking Ollama server readiness: {e}")
-            return False
-    
-    elif llm_provider == "mcp":
-        try:
-            # Use the MCP client's ready check
-            ready = is_mcp_ready()
-            if ready:
-                logger.debug("MCP server is ready")
-            else:
-                logger.error("MCP server health check failed")
-            return ready
-        except Exception as e:
-            logger.error(f"Error checking MCP server readiness: {e}")
-            return False
-    
-    else:
-        logger.error(f"Unknown LLM provider: {llm_provider}")
+    except Exception as e:
+        logger.error(f"Error checking Ollama server: {e}")
         return False

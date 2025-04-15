@@ -103,17 +103,19 @@ class BatchProcessor:
                     result, provider_name = future.result()
                     results[idx] = result
                     
-                    # Track provider usage
+            # Track provider usage (simplified)
                     with self._lock:
                         if provider_name:
-                            self._provider_usage[provider_name] = self._provider_usage.get(provider_name, 0) + 1
+                            if provider_name not in self._provider_usage:
+                                self._provider_usage[provider_name] = 0
+                            self._provider_usage[provider_name] += 1
                             
                 except Exception as e:
                     logger.error(f"Error processing item {idx} in batch {batch_idx}: {e}")
                     results[idx] = ["Unknown_Error"]
                     
                     with self._lock:
-                        self._errors["total"] = self._errors.get("total", 0) + 1
+                        self._errors["total"] += 1
         
         # Record batch processing time for auto-tuning
         elapsed = time.time() - start_time
@@ -123,8 +125,7 @@ class BatchProcessor:
             # Dynamically adjust batch size based on performance
             if len(self._batch_times) >= 3:
                 avg_time = sum(self._batch_times[-3:]) / 3
-                
-                # Scale batch size if processing is fast or slow
+                  # Scale batch size if processing is fast or slow
                 if avg_time < 1.0 and self.batch_size < 16:
                     self.batch_size += 2
                     logger.info(f"Increasing batch size to {self.batch_size} (avg time: {avg_time:.2f}s)")
@@ -134,10 +135,10 @@ class BatchProcessor:
         
         logger.debug(f"Completed batch {batch_idx} in {elapsed:.2f}s")
         return results
-    
+        
     def _process_single_item(self, item, task_type="extraction", task_complexity=1, **kwargs):
         """
-        Process a single item using the smart router.
+        Process a single item using the simplified direct provider.
         
         Args:
             item: The item to process
@@ -148,14 +149,13 @@ class BatchProcessor:
         Returns:
             Tuple of (result, provider_name)
         """
-        canonical_names = kwargs.get("canonical_names", [])
-        
-        # Use the smart router to route to the best provider
-        provider_name, client = self.router.get_best_provider(
-            task_type=task_type,
-            task_complexity=task_complexity
-        )
-        
+        canonical_names = kwargs.get("canonical_names", [])        # Get the direct provider
+        try:
+            provider_name, client = self.router.get_best_provider(task_type=task_type, complexity=task_complexity)
+        except Exception as e:
+            logger.error(f"Failed to get LLM provider: {e}")
+            return ["Unknown_Error"], None
+            
         if not client:
             logger.error("No LLM provider available")
             return ["Unknown_Error"], None
@@ -175,8 +175,10 @@ class BatchProcessor:
             except Exception as e:
                 logger.error(f"Error during extraction with {provider_name}: {e}")
                 with self._lock:
-                    self._errors[provider_name] = self._errors.get(provider_name, 0) + 1
-                    self._errors["total"] = self._errors.get("total", 0) + 1
+                    if provider_name not in self._errors:
+                        self._errors[provider_name] = 0
+                    self._errors[provider_name] += 1
+                    self._errors["total"] += 1
                 return ["Unknown_Error"], provider_name
         
         # Default fallback
@@ -272,16 +274,23 @@ class BatchProcessor:
                     
                     try:
                         batch_results = future.result()
-                        
-                        # Store results in the correct positions
+                          # Store results in the correct positions
                         for i, result in enumerate(batch_results):
                             if start_idx + i < total_items:
                                 results[start_idx + i] = result
                                 completed_count += 1
                                 progress_bar.update(1)
-                                
-                                # Call progress callback if provided
+                                  # Call progress callback if provided
+                                # Make progress updates much more visible and frequent
                                 if self.progress_callback:
+                                    # Use a longer delay to ensure Streamlit fully refreshes
+                                    import time
+                                    time.sleep(0.05)  # Increased delay for better Streamlit refresh
+                                    
+                                    # Log every progress update
+                                    logger.info(f"Batch progress: {completed_count}/{total_items} items complete ({completed_count/total_items*100:.1f}%)")
+                                    
+                                    # Call the progress callback to update UI
                                     self.progress_callback(completed_count, total_items)
                     except Exception as e:
                         logger.error(f"Error processing batch {batch_idx}: {e}")

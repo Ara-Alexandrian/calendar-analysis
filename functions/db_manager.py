@@ -446,9 +446,84 @@ def save_partial_processed_data(df, batch_id):
         
         # Prepare data for insertion, similar to save_processed_data_to_db
         from functions import config_manager
-        import json
         
         rows_to_insert = []
+        
+        # Check if 'extracted_personnel' exists in the DataFrame
+        has_extracted = 'extracted_personnel' in df.columns
+        has_uid = 'uid' in df.columns
+        
+        for _, row in df.iterrows():
+            # Get personnel from extracted_personnel if it exists, otherwise default
+            personnel = "Unknown"
+            if has_extracted:
+                extracted = row.get('extracted_personnel')
+                if isinstance(extracted, list) and len(extracted) > 0:
+                    personnel = extracted[0]  # Take the first one for partial data
+                elif isinstance(extracted, str):
+                    personnel = extracted
+            
+            # Get role and clinical percentage based on the personnel
+            role = config_manager.get_role(personnel)
+            clinical_pct = config_manager.get_clinical_pct(personnel)
+            
+            # Generate a row ID if none exists
+            uid = row.get('uid') if has_uid else f"{batch_id}_{_}"
+            
+            # Convert the row to a dict for JSON storage
+            row_dict = row.to_dict()
+            for key in ['start_time', 'end_time']:
+                if key in row_dict and pd.notna(row_dict[key]):
+                    row_dict[key] = str(row_dict[key])
+            
+            # Get or set processing status
+            processing_status = row.get('processing_status', 'in_progress')
+            
+            # Get required fields or use placeholders
+            summary = str(row.get('summary', '')) if pd.notna(row.get('summary')) else ''
+            start_time = row.get('start_time') if pd.notna(row.get('start_time')) else None
+            end_time = row.get('end_time') if pd.notna(row.get('end_time')) else None
+            duration_hours = row.get('duration_hours', 0) if pd.notna(row.get('duration_hours')) else 0
+            
+            # Append to rows to insert
+            rows_to_insert.append((
+                uid,
+                summary,
+                start_time,
+                end_time,
+                duration_hours,
+                personnel,
+                role,
+                clinical_pct,
+                row_dict,
+                batch_id,
+                processing_status
+            ))
+        
+        # Now actually insert the data
+        with conn.cursor() as cursor:
+            execute_values(
+                cursor,
+                f"""
+                INSERT INTO {settings.DB_TABLE_PROCESSED_DATA} 
+                (uid, summary, start_time, end_time, duration_hours, personnel, 
+                role, clinical_pct, raw_data, batch_id, processing_status)
+                VALUES %s
+                ON CONFLICT (uid) DO UPDATE SET
+                    personnel = EXCLUDED.personnel,
+                    role = EXCLUDED.role,
+                    clinical_pct = EXCLUDED.clinical_pct,
+                    raw_data = EXCLUDED.raw_data,
+                    batch_id = EXCLUDED.batch_id,
+                    processing_status = EXCLUDED.processing_status,
+                    processing_date = CURRENT_TIMESTAMP
+                """,
+                rows_to_insert
+            )
+            conn.commit()
+        
+        logger.info(f"Successfully saved {len(rows_to_insert)} partial rows for batch {batch_id} to database")
+        return True
         for _, row in df.iterrows():
             personnel = row.get('personnel', 'Unknown')
             # For partial processing, the personnel might be in extracted_personnel

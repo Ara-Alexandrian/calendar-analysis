@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class MCPClient:
     """Client for interacting with an MCP server."""
-      def __init__(self, base_url: str = None):
+    def __init__(self, base_url: str = None):
         """
         Initialize the MCP client.
         
