@@ -40,13 +40,14 @@ calendar-analysis/
 │   ├── config_manager.py         # Configuration management
 │   ├── data_processor.py         # Data preprocessing functions
 │   ├── db_manager.py             # Database operations
-│   ├── llm_extractor.py          # Personnel extraction wrapper
+│   ├── llm_extractor.py          # Personnel extraction wrapper (optimized for dual RTX 3090s)
 │   ├── visualization_plotly.py   # Chart generation with Plotly
 │   └── llm_extraction/           # LLM integration components
+│       ├── direct_parallel_processor.py # Optimized for dual RTX 3090s in NVLINK
 │       ├── extractor.py          # Core extraction logic
 │       ├── normalizer.py         # Name normalization logic
 │       ├── ollama_client.py      # Ollama LLM client
-│       └── smart_router.py       # Batch processing router
+│       └── utils.py              # Shared utilities for LLM processing
 │
 ├── services/                   # External services
 │   └── mcp/                    # Model Context Protocol server
@@ -115,7 +116,12 @@ The application uses Large Language Models to:
 - Extract personnel mentions from calendar event summaries
 - Handle variations in naming (nicknames, abbreviations, etc.)
 
-By default, it uses Ollama with the Mistral model, but this can be configured.
+The system is optimized for high-performance hardware setups:
+- **Direct Parallel Processing**: Specialized implementation for dual RTX 3090s in NVLINK configuration
+- **Concurrent Processing**: Efficiently processes calendar events in parallel using the full GPU capability
+- **Adaptive Workload Management**: Automatically adjusts processing to prevent Ollama from being overwhelmed
+
+By default, it uses Ollama with the Mistral model running locally on your GPUs. The processing speed and concurrency can be configured in settings.py.
 
 ## Dependencies
 
