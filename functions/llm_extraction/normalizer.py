@@ -9,7 +9,7 @@ from functions import config_manager
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def normalize_extracted_personnel(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_extracted_personnel(df) -> pd.DataFrame:
     """
     Normalizes the 'extracted_personnel' column (output from LLM)
     using the variation map to create the 'assigned_personnel' column.
@@ -23,6 +23,22 @@ def normalize_extracted_personnel(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with a new 'assigned_personnel' column containing normalized names
     """
+    # Handle the case when a list is passed instead of a DataFrame
+    if not isinstance(df, pd.DataFrame):
+        logger.error(f"Expected DataFrame but received {type(df)}. Converting to DataFrame.")
+        try:
+            # Try to convert list to DataFrame if possible
+            if isinstance(df, list):
+                # Create a basic DataFrame with the list as 'extracted_personnel' column
+                df = pd.DataFrame({'extracted_personnel': df})
+            else:
+                # For other unexpected types, create an empty DataFrame with placeholder
+                logger.error(f"Could not convert {type(df)} to DataFrame. Creating empty DataFrame.")
+                df = pd.DataFrame({'extracted_personnel': [['Unknown']]})
+        except Exception as e:
+            logger.error(f"Error converting to DataFrame: {e}")
+            df = pd.DataFrame({'extracted_personnel': [['Unknown']]})
+            
     if 'extracted_personnel' not in df.columns:
         logger.warning("Column 'extracted_personnel' not found for normalization. Skipping.")
         # Add placeholder if analysis expects it

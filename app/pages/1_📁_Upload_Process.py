@@ -1,4 +1,7 @@
-# pages/1_📁_Upload_Process.py
+"""
+Replacement Upload & Process page that uses the direct extractor
+for guaranteed console output during LLM processing.
+"""
 import streamlit as st
 import pandas as pd
 import logging
@@ -115,9 +118,8 @@ if st.session_state.get('raw_df') is not None:
             else:
                 llm_ok = True   # Allow processing with warnings if user wants to proceed
 
-    # Only enable button if config is okay (or allow proceed with warning?)
-    # Disable button if config is absolutely required and missing.
-    process_button_disabled = not config_ok or not llm_ok  # Disable if config is missing or LLM is required but not available
+    # Only enable button if config is okay
+    process_button_disabled = not config_ok or not llm_ok
     tooltip_text = "Personnel configuration missing. Check Admin page." if not config_ok else "Run the full data processing pipeline"
     if not llm_ok:
         tooltip_text = "LLM is required but not available. Check the error message."
@@ -136,40 +138,89 @@ if st.session_state.get('raw_df') is not None:
                         st.stop()
                     st.session_state.preprocessed_df = preprocessed_df
                     st.write(f"Preprocessing done: {len(preprocessed_df)} events remaining.")
-                    logger.info(f"Preprocessing complete: {len(preprocessed_df)} events.")                    # Generate a unique batch ID for this processing job
+                    logger.info(f"Preprocessing complete: {len(preprocessed_df)} events.")
+                    
+                    # Generate a unique batch ID for this processing job
                     import uuid
                     batch_id = f"batch_{uuid.uuid4().hex[:8]}_{int(time.time())}"
                     st.session_state.current_batch_id = batch_id
-                    # 2. LLM Extraction - Using Smart GPU-Optimized Processing
+                    
+                    # 2. LLM Extraction with guaranteed console output
                     if llm_enabled and llm_ok:
-                        st.write("Step 2: Extracting personnel names using optimized dual-GPU LLM extraction...")
-                        # Create a more direct progress interface without nested containers
-                        st.write("Optimized LLM extraction in progress - leveraging dual RTX 3090s and RTX 4090...")
+                        st.write("Step 2: Extracting personnel names from calendar events...")
+                        
+                        # Import the direct extractor module that displays all console output
                         try:
-                            # Try the new smart extractor first - use the direct Streamlit context
-                            # Avoid nesting in containers which can prevent UI updates
-                            llm_processed_df = llm_extraction.run_smart_extraction(preprocessed_df)
+                            from functions.llm_extraction.direct_extractor import extract_with_direct_output
+                            
+                            st.info("Processing calendar entries with full console output...")
+                            # Use our direct extraction implementation that shows all Ollama responses
+                            llm_processed_df = extract_with_direct_output(preprocessed_df)
                             st.session_state.llm_processed_df = llm_processed_df
+                            
+                            st.success("LLM extraction finished with full console output.")
+                            logger.info("LLM extraction complete with direct console output.")
+                            
                         except Exception as e:
-                            logger.warning(f"Smart extraction failed: {e}. Falling back to standard extraction.")
-                            st.warning("Optimized extraction encountered an issue. Falling back to standard extraction.")
-                            # Fall back to sequential extraction if smart extraction fails
-                            llm_processed_df = llm_extraction.run_llm_extraction_sequential(preprocessed_df)
-                            st.session_state.llm_processed_df = llm_processed_df
-                        st.write("LLM extraction finished.")
-                        logger.info("LLM extraction complete.")
+                            logger.warning(f"Direct extractor failed: {e}. Trying standard extraction...")
+                            st.warning(f"Direct extractor failed: {e}. Trying standard methods...")
+                            
+                            # Fall back to standard extraction if direct method fails
+                            try:
+                                # Use the sequential extraction method
+                                llm_processed_df = llm_extraction.run_llm_extraction_sequential(preprocessed_df)
+                                st.session_state.llm_processed_df = llm_processed_df
+                                st.success("LLM extraction completed using standard method.")
+                            except Exception as e2:
+                                logger.error(f"All extraction methods failed: {e2}")
+                                st.error(f"Extraction failed: {e2}. Using Unknown for all events.")
+                                # Create placeholder with Unknown values
+                                preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
+                                st.session_state.llm_processed_df = preprocessed_df
                     else:
                         st.warning("Skipping LLM extraction (disabled or not ready). Assigning 'Unknown'.")
                         # Create placeholder columns if skipping LLM
                         preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                        st.session_state.llm_processed_df = preprocessed_df # Use preprocessed df as base
-
-                    # 3. Normalize Extracted Personnel Names
+                        st.session_state.llm_processed_df = preprocessed_df # Use preprocessed df as base                    # 3. Normalize Extracted Personnel Names
                     st.write("Step 3: Normalizing extracted names...")
-                    normalized_df = llm_extraction.normalize_extracted_personnel(st.session_state.llm_processed_df)
-                    st.session_state.normalized_df = normalized_df
-                    st.write("Normalization finished.")
-                    logger.info("Normalization complete.")
+                    
+                    # Add defensive type check and conversion
+                    if not isinstance(st.session_state.llm_processed_df, pd.DataFrame):
+                        logger.error(f"llm_processed_df is not a DataFrame, it's a {type(st.session_state.llm_processed_df)}. Converting to DataFrame.")
+                        st.error(f"Internal error: Expected DataFrame but got {type(st.session_state.llm_processed_df)}. Attempting to fix...")
+                        
+                        # Attempt to convert or fall back to preprocessed_df
+                        try:
+                            if isinstance(st.session_state.llm_processed_df, list):
+                                # If it's a list of extracted personnel, try to add it back to preprocessed_df
+                                if len(st.session_state.llm_processed_df) == len(preprocessed_df):
+                                    temp_df = preprocessed_df.copy()
+                                    temp_df['extracted_personnel'] = st.session_state.llm_processed_df
+                                    st.session_state.llm_processed_df = temp_df
+                                else:
+                                    # Fall back to preprocessed_df with Unknown personnel
+                                    preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
+                                    st.session_state.llm_processed_df = preprocessed_df
+                            else:
+                                # For any other type, fall back to preprocessed_df
+                                preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
+                                st.session_state.llm_processed_df = preprocessed_df
+                        except Exception as e:
+                            logger.error(f"Error fixing DataFrame: {e}")
+                            preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
+                            st.session_state.llm_processed_df = preprocessed_df
+                    
+                    try:
+                        normalized_df = llm_extraction.normalize_extracted_personnel(st.session_state.llm_processed_df)
+                        st.session_state.normalized_df = normalized_df
+                        st.write("Normalization finished.")
+                        logger.info("Normalization complete.")
+                    except Exception as e:
+                        logger.error(f"Normalization error: {e}", exc_info=True)
+                        st.error(f"Error during normalization: {e}. Using default values.")
+                        # Create a simple normalized_df with assigned_personnel column
+                        st.session_state.llm_processed_df['assigned_personnel'] = [['Unknown']] * len(st.session_state.llm_processed_df)
+                        st.session_state.normalized_df = st.session_state.llm_processed_df.copy()
 
                     # Display sample of normalized data
                     st.write("Sample of data after normalization:")
@@ -184,23 +235,60 @@ if st.session_state.get('raw_df') is not None:
                         st.stop()
                     st.session_state.analysis_ready_df = analysis_ready_df
                     st.write(f"Data ready for analysis: {len(analysis_ready_df)} rows after exploding.")
-                    logger.info(f"Explosion complete: {len(analysis_ready_df)} analysis rows.")
-
-                    # Mark processing as complete
+                    logger.info(f"Explosion complete: {len(analysis_ready_df)} analysis rows.")                    # Mark processing as complete and ensure data is available for analysis
                     st.session_state.data_processed = True
                     
-                    # 5. Save processed data to PostgreSQL database (if enabled)
+                    # Always store the analysis dataframe in session state for the Analysis page
+                    if 'analysis_data' not in st.session_state:
+                        st.session_state.analysis_data = {}
+                    
+                    # Store the current batch with a timestamp for the Analysis page
+                    current_batch_key = f"batch_{int(time.time())}"
+                    st.session_state.analysis_data[current_batch_key] = {
+                        'df': analysis_ready_df,
+                        'timestamp': time.time(),
+                        'source': st.session_state.uploaded_filename,
+                        'processed_count': len(analysis_ready_df)
+                    }
+                    
+                    # Store the most recent batch ID for easy access
+                    st.session_state.most_recent_batch = current_batch_key
+                      # 5. Save processed data to PostgreSQL database (if enabled)
                     if settings.DB_ENABLED:
                         from functions import db_manager
                         st.write("Step 5: Saving processed data to PostgreSQL database...")
                         try:
-                            db_save_success = db_manager.save_processed_data_to_db(analysis_ready_df)
+                            # Use the new batch saving function with progress indicators
+                            batch_size = 500  # Save in batches of 500 records
+                            total_records = len(analysis_ready_df)
+                            progress_bar = st.progress(0.0)
+                            status_text = st.empty()
+                            
+                            # Save in batches with visual feedback
+                            status_text.write("Starting database save operation in batches...")
+                            
+                            # Use a batch ID if one exists, otherwise use the current batch key
+                            current_batch_id = st.session_state.get('current_batch_id', current_batch_key)
+                            
+                            db_save_success, saved_count = db_manager.save_processed_data_in_batches(
+                                analysis_ready_df,
+                                batch_id=current_batch_id,
+                                batch_size=batch_size
+                            )
+                            
+                            # Update progress bar to 100% when complete
+                            progress_bar.progress(1.0)
+                            
                             if db_save_success:
-                                st.success(f"Successfully saved {len(analysis_ready_df)} records to PostgreSQL database at {settings.DB_HOST}.")
-                                logger.info(f"Successfully saved {len(analysis_ready_df)} records to database.")
+                                st.success(f"Successfully saved {saved_count}/{total_records} records to PostgreSQL database at {settings.DB_HOST}.")
+                                logger.info(f"Successfully saved {saved_count}/{total_records} records to database.")
+                                
+                                # Mark the calendar file as processed only if saving was successful
+                                if current_batch_id and hasattr(db_manager, 'mark_calendar_file_as_processed'):
+                                    db_manager.mark_calendar_file_as_processed(current_batch_id)
                             else:
-                                st.warning("Failed to save data to PostgreSQL database. Check logs for details.")
-                                logger.warning("Database save operation returned False.")
+                                st.warning(f"Database save incomplete: Only saved {saved_count}/{total_records} records. Check logs for details.")
+                                logger.warning(f"Database save operation incomplete: {saved_count}/{total_records} records saved.")
                         except Exception as db_e:
                             st.error(f"Error saving to database: {db_e}")
                             logger.error(f"Database save error: {db_e}", exc_info=True)

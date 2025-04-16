@@ -11,6 +11,49 @@ _personnel_config_cache = None
 _variation_map_cache = None
 _canonical_names_cache = None
 
+def get_all_personnel():
+    """
+    Returns a list of all canonical personnel names from the configuration.
+    Used by the direct extractor module for LLM extraction.
+    
+    Returns:
+        list: A list of all canonical personnel names
+    """
+    _, _, canonical_names = load_personnel_config()
+    return canonical_names
+
+def get_role(personnel_name):
+    """
+    Get the role for a given canonical personnel name.
+    
+    Args:
+        personnel_name (str): The canonical name of the personnel
+        
+    Returns:
+        str: The role of the personnel, or 'Unknown' if not found
+    """
+    config_data, _, _ = load_personnel_config()
+    for person, data in config_data.items():
+        if person == personnel_name:
+            return data.get('role', 'Unknown')
+    return 'Unknown'
+
+def get_clinical_pct(personnel_name):
+    """
+    Get the clinical percentage for a given canonical personnel name.
+    
+    Args:
+        personnel_name (str): The canonical name of the personnel
+        
+    Returns:
+        float: The clinical percentage (0-100) of the personnel, or 0 if not found
+    """
+    config_data, _, _ = load_personnel_config()
+    for person, data in config_data.items():
+        if person == personnel_name:
+            return data.get('clinical_pct', 0)
+    return 0
+
 def load_personnel_config(force_reload=False):
     """Loads personnel configuration from JSON, caches it, and derives maps."""
     global _personnel_config_cache, _variation_map_cache, _canonical_names_cache

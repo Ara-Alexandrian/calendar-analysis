@@ -13,11 +13,45 @@ def get_db_connection():
     """
     Establishes and returns a connection to the PostgreSQL database.
     Returns None if DB_ENABLED is False or if connection fails.
+    
+    Creates the database if it doesn't exist.
     """
     if not settings.DB_ENABLED:
         logger.info("Database persistence is disabled in settings.")
         return None
     
+    # First try to connect to default database to check if our target database exists
+    try:
+        # Connect to 'postgres' default database to check if our database exists
+        default_conn = psycopg2.connect(
+            host=settings.DB_HOST,
+            port=settings.DB_PORT,
+            database='postgres',  # Default database that should exist
+            user=settings.DB_USER,
+            password=settings.DB_PASSWORD
+        )
+        default_conn.autocommit = True  # Required for creating database
+        
+        # Check if our database exists
+        cursor = default_conn.cursor()
+        cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (settings.DB_NAME.lower(),))
+        db_exists = cursor.fetchone()
+        
+        if not db_exists:
+            logger.warning(f"Database '{settings.DB_NAME}' does not exist. Creating it now...")
+            try:
+                # Create the database if it doesn't exist
+                cursor.execute(f"CREATE DATABASE {settings.DB_NAME}")
+                logger.info(f"Database '{settings.DB_NAME}' created successfully.")
+            except Exception as create_e:
+                logger.error(f"Failed to create database: {create_e}")
+        
+        cursor.close()
+        default_conn.close()
+    except Exception as check_e:
+        logger.error(f"Error checking/creating database: {check_e}")
+    
+    # Now try to connect to our target database
     try:
         # Parse special characters in password properly by URL encoding
         import urllib.parse
@@ -42,7 +76,7 @@ def get_db_connection():
             logger.info(f"Successfully connected to PostgreSQL using direct parameters")
             return conn
         except Exception as e2:
-            logger.error(f"Failed to connect to PostgreSQL with both methods: {e}, {e2}")
+            logger.error(f"Failed to connect to PostgreSQL database '{settings.DB_NAME}': {e2}")
             
             # Fall back to in-memory processing when database connection fails
             logger.warning("Falling back to in-memory processing due to database connection failure")
@@ -187,19 +221,49 @@ def save_processed_data_to_db(df, batch_id=None):
             personnel = row['personnel']
             role = config_manager.get_role(personnel)
             clinical_pct = config_manager.get_clinical_pct(personnel)
-            
-            # Convert to Python native types and handle None values
+              # Convert to Python native types and handle None values
             summary = str(row['summary']) if pd.notna(row['summary']) else None
             uid = str(row['uid']) if pd.notna(row['uid']) else None
             
+            # Make sure personnel is a string, not a list or dict
+            if isinstance(personnel, (list, dict)):
+                personnel = str(personnel)
+            
             # Convert the row to a dict for JSON storage (excluding large objects)
-            row_dict = row.to_dict()
-            for key in ['start_time', 'end_time']:  # Remove datetime objects
-                if key in row_dict:
-                    row_dict[key] = str(row_dict[key])
+            row_dict = {}
+            for key, value in row.to_dict().items():
+                # Handle various types that need conversion
+                if pd.isna(value):
+                    row_dict[key] = None
+                elif isinstance(value, (pd.Timestamp, pd.DatetimeTZDtype)):
+                    row_dict[key] = str(value)
+                elif isinstance(value, dict):
+                    # Keep dictionaries as they'll be JSON serialized later
+                    row_dict[key] = value
+                elif isinstance(value, list):
+                    # Ensure lists don't contain non-serializable objects
+                    row_dict[key] = [str(item) if not isinstance(item, (str, int, float, bool, type(None))) else item for item in value]
+                else:
+                    # Convert any other non-serializable objects to strings
+                    if not isinstance(value, (str, int, float, bool, type(None))):
+                        row_dict[key] = str(value)
+                    else:
+                        row_dict[key] = value
             
             # Get processing status if it exists
             processing_status = row.get('processing_status', 'assigned')
+            
+            # Convert the dictionary to a JSON string for PostgreSQL
+            import json
+            try:
+                row_json = json.dumps(row_dict)
+            except TypeError as e:
+                logger.error(f"JSON serialization error: {e}")
+                # Fallback: more aggressive conversion to ensure JSON serialization works
+                simple_dict = {}
+                for k, v in row_dict.items():
+                    simple_dict[k] = str(v)
+                row_json = json.dumps(simple_dict)
             
             rows_to_insert.append((
                 uid,
@@ -210,7 +274,7 @@ def save_processed_data_to_db(df, batch_id=None):
                 personnel,
                 role,
                 clinical_pct,
-                row_dict,  # Store the full row as JSON
+                row_json,  # Store the full row as a JSON string
                 batch_id,
                 processing_status
             ))
@@ -253,6 +317,65 @@ def save_processed_data_to_db(df, batch_id=None):
     finally:
         if conn:
             conn.close()
+
+def save_processed_data_in_batches(df, batch_id=None, batch_size=100):
+    """
+    Saves processed data to the database in smaller batches to prevent data loss
+    if processing is interrupted.
+    
+    Args:
+        df: DataFrame containing processed event data
+        batch_id: Optional batch ID to associate with this data
+        batch_size: Number of records to save in each database transaction
+        
+    Returns:
+        tuple: (bool, int) - Success status and count of saved records
+    """
+    if df is None or df.empty:
+        logger.warning("No data to save to database.")
+        return False, 0
+    
+    total_rows = len(df)
+    saved_rows = 0
+    failed_batches = []
+    
+    try:
+        # Process and save data in batches
+        for start_idx in range(0, total_rows, batch_size):
+            end_idx = min(start_idx + batch_size, total_rows)
+            batch_df = df.iloc[start_idx:end_idx].copy()
+            
+            try:
+                # Save this batch
+                batch_success = save_processed_data_to_db(batch_df, batch_id)
+                
+                if batch_success:
+                    saved_rows += len(batch_df)
+                    logger.info(f"Saved batch {start_idx//batch_size + 1}: {saved_rows}/{total_rows} records")
+                else:
+                    error_msg = f"Failed to save batch starting at record {start_idx}"
+                    logger.error(error_msg)
+                    failed_batches.append((start_idx, end_idx, error_msg))
+            except Exception as e:
+                error_msg = f"Exception while saving batch starting at record {start_idx}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                failed_batches.append((start_idx, end_idx, error_msg))
+                # Continue with next batch despite errors
+                continue
+        
+        success = saved_rows > 0
+        if success:
+            logger.info(f"Successfully saved {saved_rows}/{total_rows} records in batches")
+            if failed_batches:
+                logger.warning(f"There were {len(failed_batches)} failed batches. Check logs for details.")
+        else:
+            logger.error("Failed to save any records to database")
+            
+        return success, saved_rows
+    
+    except Exception as e:
+        logger.error(f"Error in batch saving process: {str(e)}", exc_info=True)
+        return False, saved_rows
 
 def save_personnel_config_to_db(config_dict):
     """
@@ -523,73 +646,6 @@ def save_partial_processed_data(df, batch_id):
             conn.commit()
         
         logger.info(f"Successfully saved {len(rows_to_insert)} partial rows for batch {batch_id} to database")
-        return True
-        for _, row in df.iterrows():
-            personnel = row.get('personnel', 'Unknown')
-            # For partial processing, the personnel might be in extracted_personnel
-            if 'personnel' not in row and 'extracted_personnel' in row:
-                # Handle both string and list formats from LLM extraction
-                extracted = row['extracted_personnel']
-                if isinstance(extracted, list) and len(extracted) > 0:
-                    personnel = extracted[0]
-                elif isinstance(extracted, str):
-                    personnel = extracted
-            
-            role = config_manager.get_role(personnel)
-            clinical_pct = config_manager.get_clinical_pct(personnel)
-            
-            summary = str(row['summary']) if pd.notna(row.get('summary')) else None
-            uid = str(row['uid']) if pd.notna(row.get('uid')) else None
-            
-            # Convert the row to a dict for JSON storage
-            row_dict = row.to_dict()
-            for key in ['start_time', 'end_time']:
-                if key in row_dict and row_dict[key] is not None:
-                    row_dict[key] = str(row_dict[key])
-            
-            # Determine processing status
-            status = 'processing'
-            if 'extracted_personnel' in row and row['extracted_personnel'] != []:
-                status = 'extracted'
-            if 'assigned_personnel' in row:
-                status = 'assigned'
-            
-            # Serialize nested dicts/lists to JSON string
-            row_json = json.dumps(row_dict)
-            
-            rows_to_insert.append((
-                uid,
-                summary,
-                row.get('start_time'),
-                row.get('end_time'),
-                row.get('duration_hours'),
-                personnel,
-                role,
-                clinical_pct,
-                row_json,  # Use serialized JSON string instead of raw dict
-                batch_id,
-                status
-            ))
-        
-        # Insert or update data
-        with conn.cursor() as cursor:
-            execute_values(
-                cursor,
-                f"""
-                INSERT INTO {settings.DB_TABLE_PROCESSED_DATA} 
-                (uid, summary, start_time, end_time, duration_hours, personnel, role, 
-                clinical_pct, raw_data, batch_id, processing_status)
-                VALUES %s
-                ON CONFLICT (uid) DO UPDATE SET
-                    personnel = EXCLUDED.personnel,
-                    raw_data = EXCLUDED.raw_data,
-                    processing_status = EXCLUDED.processing_status
-                """,
-                rows_to_insert
-            )
-            conn.commit()
-            
-        logger.info(f"Successfully saved {len(rows_to_insert)} partial rows for batch {batch_id}")
         return True
         
     except Exception as e:
@@ -995,3 +1051,39 @@ def get_processed_events_by_batch(batch_id):
     finally:
         if conn:
             conn.close()
+
+def get_db_connection_with_retry(max_retries=3, retry_delay=2):
+    """
+    Attempts to connect to the database with retry logic.
+    
+    Args:
+        max_retries: Maximum number of connection attempts
+        retry_delay: Seconds to wait between retries
+        
+    Returns:
+        Connection object or None if all attempts fail
+    """
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            conn = get_db_connection()
+            if conn:
+                # Test the connection with a simple query
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    cursor.fetchone()
+                logger.info(f"Successfully connected to database after {retry_count + 1} attempts")
+                return conn
+        except Exception as e:
+            last_error = e
+            retry_count += 1
+            logger.warning(f"Database connection attempt {retry_count} failed: {e}")
+            if retry_count < max_retries:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                import time
+                time.sleep(retry_delay)
+    
+    logger.error(f"Failed to connect to database after {max_retries} attempts: {last_error}")
+    return None

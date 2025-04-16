@@ -83,9 +83,8 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
         
         # Set a timeout for the request
         timeout_seconds = 30  # 30 second timeout
-        
-        # Log that we're about to call the API
-        logger.debug(f"Calling Ollama API for summary: '{summary[:30]}...'")
+          # Log that we're about to call the API
+        logger.info(f"Calling Ollama API for summary: '{summary[:30]}...'")
         
         response = llm_client.chat(
             model=settings.LLM_MODEL,
@@ -98,7 +97,7 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
         )
         
         elapsed_time = time.time() - start_time
-        logger.debug(f"Ollama API call completed in {elapsed_time:.2f} seconds")
+        logger.info(f"Ollama API call completed in {elapsed_time:.2f} seconds. Response: {str(response)[:150]}...")
 
         content = response.get('message', {}).get('content', '')
         if not content:
@@ -800,9 +799,14 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
         # Start background thread for processing
         def process_in_background():
             logger.info(f"Starting background LLM extraction for batch {batch_id} with {len(summaries)} summaries")
+              # Create a persistent terminal progress bar for the background process that's clearly visible
+            if TQDM_AVAILABLE:
+                term_progress = tqdm(total=len(summaries), desc=f"Batch {batch_id}", position=0, leave=True, 
+                                    bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+            else:
+                term_progress = get_persistent_progress_bar(len(summaries), f"Background LLM Extraction (Batch {batch_id})")
             
-            # Create a persistent terminal progress bar for the background process
-            term_progress = get_persistent_progress_bar(len(summaries), f"Background LLM Extraction (Batch {batch_id})")
+            print(f"\n\033[1m>>> Processing {len(summaries)} items with batch ID {batch_id} <<<\033[0m")
             
             # Get a fresh LLM client for this thread
             thread_llm_client = get_llm_client()
@@ -841,16 +845,19 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                         if settings.DB_ENABLED:
                             batch_df = df_copy.iloc[max(0, i - save_frequency):i+1].copy()
                             db_manager.save_partial_processed_data(batch_df, batch_id)
-                            logger.info(f"Saved progress for items {max(0, i - save_frequency)}-{i}.")
-
-                    # Update progress tracking
+                            logger.info(f"Saved progress for items {max(0, i - save_frequency)}-{i}.")                    # Update progress tracking with more visible output
                     processed_count += 1
                     term_progress.update(1)
                     progress = processed_count / len(summaries)
-                    logger.info(f"Progress: {processed_count}/{len(summaries)} ({progress*100:.2f}%)")
-
+                    
+                    # Print direct status updates that will be visible in terminal
+                    if processed_count % 5 == 0 or processed_count == 1:
+                        print(f"✓ Processed {processed_count}/{len(summaries)} ({progress*100:.2f}%) - Last result: {str(result)[:50]}...")
+                    
+                    logger.info(f"Progress: {processed_count}/{len(summaries)} ({progress*100:.2f}%) - Result: {result}")
+                    
                     # Add a small delay to avoid overwhelming the server
-                    time.sleep(0.2)
+                    time.sleep(0.1)
 
                 except Exception as e:
                     logger.error(f"Error processing summary {i+1}/{len(summaries)}: {e}")

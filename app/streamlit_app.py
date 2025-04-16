@@ -55,6 +55,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("Starting Calendar Workload Analyzer application")
 
+# Initialize database if DB_ENABLED
+if settings.DB_ENABLED:
+    try:
+        from functions import initialize_db
+        logger.info("Initializing database with baseline configuration...")
+        initialize_db.initialize_database()
+    except Exception as db_init_error:
+        logger.error(f"Error during database initialization: {db_init_error}")
+        st.error("Database initialization failed. Check the logs for details.")
+
 # Set page configuration
 st.set_page_config(
     page_title=settings.APP_TITLE,

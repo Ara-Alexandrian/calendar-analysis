@@ -131,7 +131,7 @@
         "clinical_pct": 0.95,
         "variations": [
             "King",
-            "King III"
+            "MNKING"
         ]
     },
     "Kovtun": {
@@ -181,6 +181,15 @@
         "clinical_pct": 0.95,
         "variations": [
             "Bermudez"
+        ]
+    },
+    "King III": {
+        "role": "physician",
+        "clinical_pct": 0.95,
+        "variations": [
+            "KING3",
+            "KING 3",
+            "KING III"
         ]
     }
 }

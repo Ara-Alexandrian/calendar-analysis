@@ -1,13 +1,16 @@
 """
-Simplified LLM extractor module for Calendar Analysis.
-This version only uses Ollama for personnel extraction from calendar events.
+Optimized LLM extractor module for Calendar Analysis.
+This version uses direct parallel processing optimized for dual RTX 3090s in NVLINK configuration.
 """
 import logging
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
-# Import from our simplified Ollama client
-from functions.llm_extraction.ollama_client import is_ollama_ready, extract_personnel
+# Import from our simplified Ollama client for service check
+from functions.llm_extraction.ollama_client import is_ollama_ready
+
+# Import our optimized direct parallel processor for dual RTX 3090s
+from functions.llm_extraction.direct_parallel_processor import DirectParallelProcessor
 
 # Import settings
 from config import settings
@@ -27,6 +30,7 @@ def is_llm_ready() -> bool:
 def process_events_with_llm(events_df: pd.DataFrame) -> pd.DataFrame:
     """
     Process calendar events with LLM to extract personnel names.
+    Optimized for dual RTX 3090s in NVLINK configuration using direct parallel processing.
     
     Args:
         events_df: DataFrame containing calendar events with 'summary' column
@@ -44,29 +48,37 @@ def process_events_with_llm(events_df: pd.DataFrame) -> pd.DataFrame:
     # This is used to help the LLM identify known personnel
     try:
         from functions import config_manager
-        _, _, canonical_names = config_manager.load_personnel_config()
+        canonical_names = config_manager.get_all_personnel()
+        logger.info(f"Loaded {len(canonical_names)} personnel names from config")
     except Exception as e:
         logger.error(f"Error loading personnel config: {e}")
         canonical_names = []
     
-    # Process each event
-    extracted_personnel_list = []
-    for idx, row in events_df.iterrows():
-        summary = row.get('summary', '')
+    try:
+        # Create progress callback for Streamlit
+        def update_progress(completed, total):
+            if 'st' in globals():
+                import streamlit as st
+                progress = completed / total if total > 0 else 0
+                st.session_state['progress'] = progress
+                st.session_state['progress_text'] = f"{completed}/{total} events processed"
+                
+        # Create the direct parallel processor optimized for dual RTX 3090s
+        logger.info("Starting direct parallel processing with dual RTX 3090s NVLINK optimization")
+        processor = DirectParallelProcessor(progress_callback=update_progress)
         
-        if not summary:
-            extracted_personnel_list.append(["Unknown"])
-            continue
+        # Process the dataframe directly with our optimized processor
+        start_time = pd.Timestamp.now()
+        result_df = processor.process_dataframe(events_df, summary_col="summary", canonical_names=canonical_names)
+        elapsed = (pd.Timestamp.now() - start_time).total_seconds()
         
-        try:
-            # Extract personnel using our simplified Ollama client
-            personnel = extract_personnel(summary, canonical_names)
-            extracted_personnel_list.append(personnel)
-        except Exception as e:
-            logger.error(f"Error extracting personnel for event {idx}: {e}")
-            extracted_personnel_list.append(["Unknown_Error"])
+        logger.info(f"Direct parallel processing complete in {elapsed:.2f} seconds")
+        logger.info(f"Processed {len(events_df)} events with LLM extraction")
+        
+        return result_df
     
-    # Add the extracted personnel to the DataFrame
-    events_df['extracted_personnel'] = extracted_personnel_list
-    
-    return events_df
+    except Exception as e:
+        logger.error(f"Error in direct parallel LLM extraction: {e}")
+        # Add an empty extraction column as fallback
+        events_df['extracted_personnel'] = [["Unknown_Error"]] * len(events_df)
+        return events_df

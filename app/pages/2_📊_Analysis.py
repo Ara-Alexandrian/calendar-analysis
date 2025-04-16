@@ -16,7 +16,7 @@ from functions import analysis_calculations as ac
 from functions import visualization_plotly as viz
 from functions import config_manager # To get personnel list, roles
 from functions import db_manager # For real-time database queries
-from functions import llm_extractor # For checking background processing status
+from functions import llm_extraction # For checking background processing status
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,29 @@ def load_latest_data():
     """Loads the most up-to-date data from either session state or database"""
     data_source = st.session_state.get('data_source', 'session')
     
-    # Check for background processing data first
+    # Log what's in session state for debugging
+    logger.info(f"Session state keys: {list(st.session_state.keys())}")
+    
+    # Check for our newly added analysis_data structure first
+    if 'analysis_data' in st.session_state and st.session_state.analysis_data:
+        try:
+            # Get the most recent batch if available
+            if 'most_recent_batch' in st.session_state and st.session_state.most_recent_batch in st.session_state.analysis_data:
+                batch_key = st.session_state.most_recent_batch
+                df = st.session_state.analysis_data[batch_key]['df']
+                logger.info(f"Loaded {len(df)} records from analysis_data[{batch_key}]")
+                return df
+            # Otherwise use the latest batch by timestamp
+            elif st.session_state.analysis_data:
+                latest_batch = max(st.session_state.analysis_data.keys(), 
+                                  key=lambda k: st.session_state.analysis_data[k].get('timestamp', 0))
+                df = st.session_state.analysis_data[latest_batch]['df']
+                logger.info(f"Loaded {len(df)} records from latest analysis_data batch: {latest_batch}")
+                return df
+        except Exception as e:
+            logger.error(f"Error loading from analysis_data: {e}")
+    
+    # Check for background processing data
     if st.session_state.get('llm_background_processing', False):
         batch_id = st.session_state.get('current_batch_id')
         
@@ -77,10 +99,24 @@ def load_latest_data():
             logger.error(f"Error loading data from database: {e}")
             st.error("Could not load data from database. Using session data instead.")
     
-    # Fall back to session state
-    if 'analysis_ready_df' in st.session_state and st.session_state.analysis_ready_df is not None:
+    # Fall back to standard session state locations
+    if 'analysis_ready_df' in st.session_state and st.session_state.analysis_ready_df is not None and not st.session_state.analysis_ready_df.empty:
+        logger.info(f"Loaded {len(st.session_state.analysis_ready_df)} records from analysis_ready_df")
         return st.session_state.analysis_ready_df
     
+    if 'normalized_df' in st.session_state and st.session_state.normalized_df is not None:
+        # Need to explode the data since it's not analysis-ready yet
+        try:
+            from functions import data_processor
+            df = data_processor.explode_by_personnel(st.session_state.normalized_df, personnel_col='assigned_personnel')
+            if not df.empty:
+                logger.info(f"Loaded and exploded {len(df)} records from normalized_df")
+                return df
+        except Exception as e:
+            logger.error(f"Error exploding normalized_df: {e}")
+    
+    # If still no data, return None
+    logger.warning("Analysis page: load_latest_data() returned None. No data found in any storage location.")
     return None
 
 # Sidebar controls for real-time updates
@@ -131,22 +167,32 @@ if st.session_state.auto_refresh:
         st.session_state.last_refresh_time = time.time()
         st.rerun()
 
+# --- Additional debug info in UI for troubleshooting ---
+with st.expander("Debug Information", expanded=False):
+    st.write("Session State Keys:", list(st.session_state.keys()))
+    if 'analysis_data' in st.session_state:
+        st.write("Analysis Data Batches:", list(st.session_state.analysis_data.keys()))
+    if 'most_recent_batch' in st.session_state:
+        st.write("Most Recent Batch ID:", st.session_state.most_recent_batch)
+    if 'data_processed' in st.session_state:
+        st.write("Data Processed Flag:", st.session_state.data_processed)
+
 # --- Load data ---
 df_analysis = load_latest_data()
 
 # --- Check if data is ready ---
 if df_analysis is None:
-    logger.warning("Analysis page: load_latest_data() returned None.")
-elif df_analysis.empty:
-    logger.warning("Analysis page: load_latest_data() returned an empty DataFrame.")
-else:
-    logger.info(f"Analysis page: Loaded DataFrame with {len(df_analysis)} rows and columns: {df_analysis.columns.tolist()}")
-    # Log data types as well
-    logger.info(f"Analysis page: DataFrame dtypes:\n{df_analysis.dtypes}")
-
-if df_analysis is None or df_analysis.empty:
     st.warning("No processed data available for analysis. Please upload and process data on the 'Upload & Process' page first.", icon="⚠️")
-    st.stop() # Stop execution of this page
+    st.info("After processing data, the results will appear here automatically.")
+    
+    # Add a helpful button to navigate to the Upload page
+    if st.button("Go to Upload & Process Page"):
+        st.switch_page("pages/1_📁_Upload_Process.py")
+    
+    st.stop()  # Stop execution of this page
+elif df_analysis.empty:
+    st.warning("The processed data is empty. Please check your calendar file and processing settings.", icon="⚠️")
+    st.stop()  # Stop execution of this page
 
 logger.info(f"Analysis page loaded with {len(df_analysis)} rows.")
 

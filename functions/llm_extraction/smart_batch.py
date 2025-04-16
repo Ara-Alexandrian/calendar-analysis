@@ -20,24 +20,26 @@ logger = logging.getLogger(__name__)
 
 class BatchProcessor:
     """
-    Advanced batch processor for optimized LLM extraction across multiple hardware setups.
-    Distributes workload between Ollama (dual RTX 3090s) and MCP (RTX 4090) servers.
+    Optimized processor for direct LLM extraction taking advantage of dual RTX 3090s in NVLINK.
+    Maximizes throughput for powerful GPU setups without unnecessary batching.
     """
     
-    def __init__(self, batch_size=8, max_workers=None, progress_callback=None):
+    def __init__(self, batch_size=None, max_workers=None, progress_callback=None):
         """
-        Initialize the batch processor.
+        Initialize the processor.
         
         Args:
-            batch_size: Number of items to process in each batch
+            batch_size: Ignored (maintained for backwards compatibility)
             max_workers: Maximum number of concurrent workers (default: auto-configured)
             progress_callback: Optional callback function to report progress
         """
-        self.batch_size = batch_size
+        # Ignore batch_size - we'll process items directly with full concurrency
+        self.batch_size = 1  # Process one item per thread for maximum parallelism
+        
         # Auto-configure max_workers based on hardware
         if max_workers is None:
-            # Default to higher concurrency to utilize both systems
-            self.max_workers = getattr(settings, "LLM_MAX_WORKERS", 12)
+            # Take full advantage of dual RTX 3090s in NVLINK
+            self.max_workers = getattr(settings, "LLM_MAX_WORKERS", 6)
         else:
             self.max_workers = max_workers
             
@@ -212,10 +214,10 @@ class BatchProcessor:
                 else:
                     logger.error(f"All {max_retries+1} extraction attempts failed")
                     raise
-    
-    def process_dataframe(self, df, summary_col="summary", canonical_names=None):
+      def process_dataframe(self, df, summary_col="summary", canonical_names=None):
         """
-        Process a dataframe using smart batching and optimal workload distribution.
+        Process a dataframe using direct parallel processing for powerful GPU setups.
+        Takes full advantage of dual RTX 3090s in NVLINK configuration.
         
         Args:
             df: Input dataframe
@@ -239,38 +241,34 @@ class BatchProcessor:
             logger.warning("Empty dataframe, nothing to process")
             return df_copy
             
-        logger.info(f"Processing {total_items} items with smart batching")
+        logger.info(f"Processing {total_items} items with direct parallel processing using dual RTX 3090s")
         
         # Initialize results storage
         results = [None] * total_items
         
-        # Create batches
-        batch_size = min(self.batch_size, max(1, total_items // 10))  # Ensures reasonable batch count
-        batches = [summaries[i:i+batch_size] for i in range(0, total_items, batch_size)]
-        
-        # Process batches with ThreadPoolExecutor for parallel batch processing
+        # Process items directly in parallel using thread pool
         completed_count = 0
-        progress_bar = get_persistent_progress_bar(total_items, "SmartBatch Extraction")
+        progress_bar = get_persistent_progress_bar(total_items, "Direct GPU Extraction")
         
         try:
-            with ThreadPoolExecutor(max_workers=min(len(batches), self.max_workers // 2)) as executor:
-                # Track futures to batch indices
-                future_to_batch_idx = {}
+            # Use a large thread pool to take advantage of dual RTX 3090s in NVLINK
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Track futures to item indices
+                future_to_idx = {}
                 
-                # Submit all batches
-                for batch_idx, batch in enumerate(batches):
+                # Submit all items individually
+                for idx, summary in enumerate(summaries):
                     future = executor.submit(
-                        self._process_batch, 
-                        batch, 
-                        batch_idx,
-                        {"canonical_names": canonical_names}
+                        self._process_single_item, 
+                        summary,
+                        task_type="extraction",
+                        canonical_names=canonical_names
                     )
-                    future_to_batch_idx[future] = batch_idx
+                    future_to_idx[future] = idx
                 
                 # Collect results as they complete
-                for future in as_completed(future_to_batch_idx):
-                    batch_idx = future_to_batch_idx[future]
-                    start_idx = batch_idx * batch_size
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
                     
                     try:
                         batch_results = future.result()

@@ -42,6 +42,12 @@ LLM_MAX_WORKERS = int(os.environ.get("LLM_MAX_WORKERS", "3"))
 # --- Visualization Settings ---
 # Maximum number of personnel to display in workload plots
 PLOT_PERSONNEL_LIMIT = int(os.environ.get("PLOT_PERSONNEL_LIMIT", "20"))
+# Title prefix for visualization plots
+PLOT_TITLE = os.environ.get("PLOT_TITLE", "Calendar Workload Analysis")
+# Labels for visualization axes
+PLOT_Y_LABEL = os.environ.get("PLOT_Y_LABEL", "Personnel")
+PLOT_X_LABEL_HOURS = os.environ.get("PLOT_X_LABEL_HOURS", "Duration (Hours)")
+PLOT_X_LABEL_EVENTS = os.environ.get("PLOT_X_LABEL_EVENTS", "Number of Events")
 
 # --- Database Configuration ---
 DB_ENABLED = os.environ.get("DB_ENABLED", "True").lower() in ["true", "1", "yes"]
