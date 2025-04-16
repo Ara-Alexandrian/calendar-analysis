@@ -9,7 +9,6 @@ from .extractor import (
     run_llm_extraction_sequential,
     extract_personnel_with_llm
 )
-from .smart_extractor import run_smart_extraction
 from .normalizer import normalize_extracted_personnel
 from .client import is_llm_ready
 
@@ -21,7 +20,7 @@ __all__ = [
     'OLLAMA_AVAILABLE',
     'run_llm_extraction_parallel',
     'run_llm_extraction_sequential',
-    'run_smart_extraction',
+    # 'run_smart_extraction' has been removed as this functionality is no longer used
     'normalize_extracted_personnel',
     'extract_personnel_with_llm'
 ]

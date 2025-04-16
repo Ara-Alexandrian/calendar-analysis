@@ -12,7 +12,8 @@ import threading
 from config import settings
 from .utils import get_persistent_progress_bar
 from .extractor import _extract_single_physicist_llm
-from .ollama_client import OllamaClient
+# Import the function to get the client, not a non-existent class
+from .ollama_client import get_ollama_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -40,7 +41,8 @@ class DirectParallelProcessor:
             self.max_workers = max_workers
             
         self.progress_callback = progress_callback
-        self.client = OllamaClient()
+        # Get the client instance using the function
+        self.client = get_ollama_client()
         
         # Thread safety
         self._lock = threading.Lock()
@@ -74,11 +76,12 @@ class DirectParallelProcessor:
                 else:
                     logger.error(f"All {max_retries+1} extraction attempts failed")
                     raise Exception(f"Extraction failed after {max_retries+1} attempts: {str(e)}")
-    
+
+    # Correct indentation for the method definition
     def process_dataframe(self, df, summary_col="summary", canonical_names=None):
         """
-        Process a dataframe using direct parallel processing optimized for powerful GPUs.
-        Takes full advantage of dual RTX 3090s in NVLINK configuration.
+        Process a dataframe using the direct parallel processor.
+        Submits all events concurrently to the LLM via a thread pool.
         
         Args:
             df: Input dataframe
@@ -102,69 +105,51 @@ class DirectParallelProcessor:
             logger.warning("Empty dataframe, nothing to process")
             return df_copy
             
-        logger.info(f"Processing {total_items} items with direct parallel processing (dual RTX 3090s)")
+        logger.info(f"Processing {total_items} events one by one sequentially")
         
         # Initialize results storage
         results = [None] * total_items
         
-        # Process items directly with high parallelism for powerful GPUs
+        # Process items one by one sequentially
         completed_count = 0
-        progress_bar = get_persistent_progress_bar(total_items, "Direct GPU Extraction")
+        progress_bar = get_persistent_progress_bar(total_items, "Direct Parallel LLM Processing")
         
-        try:
-            # Use a thread pool optimized for direct processing on powerful GPUs
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Track futures to item indices
-                future_to_idx = {}
-                
-                # Submit items individually for maximum GPU utilization
-                for idx, summary in enumerate(summaries):
-                    # Add a small staggered delay to avoid overwhelming Ollama on startup
-                    if idx < self.max_workers:
-                        time.sleep(0.5)
-                        
-                    future = executor.submit(
-                        self._extract_with_retry,
-                        summary, 
-                        canonical_names
-                    )
-                    future_to_idx[future] = idx
-                
-                # Collect results as they complete
-                for future in as_completed(future_to_idx):
-                    idx = future_to_idx[future]
-                    
-                    try:
-                        # Get individual item result
-                        item_result = future.result()
-                        results[idx] = item_result
-                        completed_count += 1
-                        progress_bar.update(1)
-                        
-                        # Call progress callback if provided
-                        if self.progress_callback and completed_count % 5 == 0:  # Update every 5 items
-                            # Use a short delay to ensure Streamlit refreshes
-                            time.sleep(0.02)
-                            
-                            # Log progress periodically
-                            if completed_count % 20 == 0 or completed_count == total_items:
-                                logger.info(f"Progress: {completed_count}/{total_items} items complete ({completed_count/total_items*100:.1f}%)")
-                            
-                            # Call the progress callback to update UI
-                            self.progress_callback(completed_count, total_items)
-                    
-                    except Exception as e:
-                        logger.error(f"Error processing item {idx}: {e}")
-                        results[idx] = ["Unknown_Error"]
-                        completed_count += 1
-                        progress_bar.update(1)
-                        
-                        # Track errors
-                        with self._lock:
-                            self._errors += 1
-        finally:
-            progress_bar.close()
-            
+        # Use ThreadPoolExecutor for parallel processing
+        results = [None] * total_items # Pre-allocate results list
+        futures = {}
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit all tasks
+            for idx, summary in enumerate(summaries):
+                if not summary: # Skip empty summaries
+                    results[idx] = ["Unknown"]
+                    continue
+                future = executor.submit(self._extract_with_retry, summary, canonical_names)
+                futures[future] = idx # Map future back to original index
+
+            # Process completed futures
+            completed_count = 0
+            start_time = time.time()
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    item_result = future.result()
+                    results[idx] = item_result
+                    logger.debug(f"Event {idx+1}: Extracted personnel: {item_result}")
+                except Exception as e:
+                    logger.error(f"Error processing item {idx}: {e}")
+                    results[idx] = ["Unknown_Error"]
+                    with self._lock:
+                        self._errors += 1
+                finally:
+                    completed_count += 1
+                    progress_bar.update(1)
+                    if self.progress_callback:
+                        self.progress_callback(completed_count, total_items)
+
+        progress_bar.close()
+        end_time = time.time()
+        logger.info(f"Parallel processing finished in {end_time - start_time:.2f} seconds.")
         # Log performance statistics
         error_rate = (self._errors / max(1, total_items)) * 100
         logger.info(f"Error rate: {error_rate:.2f}% ({self._errors} errors)")

@@ -36,16 +36,19 @@ def filter_data(df: pd.DataFrame, start_date=None, end_date=None, selected_perso
     if 'personnel' not in df_filtered.columns:
          logger.warning("Filtering skipped: 'personnel' column missing.")
     elif selected_personnel: # If list is not empty
-        df_filtered = df_filtered[df_filtered['personnel'].isin(selected_personnel)]
-
-    # 3. Filter by Role
+        df_filtered = df_filtered[df_filtered['personnel'].isin(selected_personnel)]    # 3. Filter by Role
     if selected_roles: # If list is not empty
-        # Map personnel names to roles
-        personnel_roles = {name: config_manager.get_role(name) for name in df_filtered['personnel'].unique()}
-        df_filtered['role'] = df_filtered['personnel'].map(personnel_roles)
-        df_filtered = df_filtered[df_filtered['role'].isin(selected_roles)]
-        # Optionally drop the temporary 'role' column if not needed later
-        # df_filtered = df_filtered.drop(columns=['role'])
+        # Check if role column exists in the dataframe
+        if 'role' in df_filtered.columns:
+            # Use existing role column
+            df_filtered = df_filtered[df_filtered['role'].isin(selected_roles)]
+        else:
+            # Map personnel names to roles if role column doesn't exist
+            personnel_roles = {name: config_manager.get_role(name) for name in df_filtered['personnel'].unique()}
+            df_filtered['role'] = df_filtered['personnel'].map(personnel_roles)
+            df_filtered = df_filtered[df_filtered['role'].isin(selected_roles)]
+            # Optionally drop the temporary 'role' column if not needed later
+            # df_filtered = df_filtered.drop(columns=['role'])
 
     logger.info(f"Data filtered: {len(df_filtered)} rows remaining.")
     return df_filtered
@@ -66,12 +69,17 @@ def calculate_workload_summary(df_filtered: pd.DataFrame):
         total_duration_hours=('duration_hours', 'sum')
     ).reset_index()
 
-    # Calculate average duration
-    workload['avg_duration_hours'] = workload['total_duration_hours'] / workload['total_events']
+    # Calculate average duration safely, handling potential division by zero
+    workload['avg_duration_hours'] = workload.apply(
+        lambda row: row['total_duration_hours'] / row['total_events'] if row['total_events'] > 0 else 0,
+        axis=1
+    )
 
-    # Add role and clinical percentage from config
+    # Add role and clinical percentage from config, handling None for clinical_pct
     workload['role'] = workload['personnel'].apply(config_manager.get_role)
-    workload['clinical_pct'] = workload['personnel'].apply(config_manager.get_clinical_pct)
+    # Provide a default value (e.g., 0) if clinical_pct is None
+    workload['clinical_pct'] = workload['personnel'].apply(lambda p: config_manager.get_clinical_pct(p) if config_manager.get_clinical_pct(p) is not None else 0)
+
 
     # Reorder columns for clarity
     workload = workload[[

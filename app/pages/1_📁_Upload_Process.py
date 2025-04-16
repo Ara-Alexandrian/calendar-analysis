@@ -16,12 +16,19 @@ if PROJECT_ROOT not in sys.path:
 
 # Import and reload modules to ensure latest changes
 from functions import data_processor
-import functions.llm_extraction as llm_extraction
-from functions.llm_extraction.client import is_llm_ready
+# Specific imports for LLM processing
+# from functions.llm_extraction.sequential_processor import SequentialProcessor # <-- Bypass this
+from functions.llm_extraction.extractor import _extract_single_physicist_llm # <-- Import directly
+from functions.llm_extraction.ollama_client import get_ollama_client # <-- Correct path for client getter
+from functions.llm_extraction.normalizer import normalize_extracted_personnel
+from functions.llm_extraction.client import is_llm_ready # Keep this for the readiness check
+# Import the package itself if needed for constants like OLLAMA_AVAILABLE
+import functions.llm_extraction
 from functions import config_manager # Needed to check config status
 from config import settings # For LLM provider check
 import functions.db_manager as db_manager
-importlib.reload(db_manager)  # Force reload the module to get latest changes
+# No need to reload db_manager usually unless actively developing it
+# importlib.reload(db_manager)
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +46,20 @@ if uploaded_file is not None:
     # Read content - important to do it here before the file buffer might close
     try:
         file_content = uploaded_file.getvalue()
-        
+
         # Save the raw file to database if enabled
-        from functions import db_manager
+        # from functions import db_manager # Already imported above
         if settings.DB_ENABLED:
             success, batch_id, is_duplicate = db_manager.save_calendar_file_to_db(
                 filename=uploaded_file.name,
                 file_content=file_content
             )
-            
+
             if success:
                 st.session_state.current_batch_id = batch_id
                 if is_duplicate:
                     st.info(f"This file has been uploaded before. Existing data will be used to avoid duplicates.")
-        
+
         # Load raw data using the modified function
         raw_df = data_processor.load_raw_calendar_data(file_content, uploaded_file.name)
 
@@ -82,37 +89,46 @@ if st.session_state.get('raw_df') is not None:
     st.markdown("---")
     st.subheader("Processing Pipeline")
 
-    # Check if personnel config is loaded
-    if not st.session_state.get('canonical_names'):
-         st.warning("Personnel configuration is not loaded or empty. Please check the Admin page. Processing may yield poor results.")
-         config_ok = False
-    else:
-        config_ok = True
+    # Load personnel config directly from config_manager
+    try:
+        _, _, canonical_names = config_manager.get_personnel_details()
+        st.session_state['canonical_names'] = canonical_names  # Store in session state for later use
+        if not canonical_names:
+            st.warning("Personnel configuration is loaded but empty. Processing may yield poor results.")
+            config_ok = False
+        else:
+            config_ok = True
+            st.info(f"Found {len(canonical_names)} personnel in configuration.")
+    except Exception as e:
+        st.warning(f"Personnel configuration could not be loaded: {e}. Processing may yield poor results.")
+        config_ok = True  # Still allow processing even if config can't be loaded
 
     # Check LLM status if provider is configured
     llm_ok = True
     llm_enabled = settings.LLM_PROVIDER and settings.LLM_PROVIDER.lower() != 'none'
     if llm_enabled:
+        # Check if OLLAMA_AVAILABLE constant exists before using it
+        ollama_lib_available = getattr(functions.llm_extraction, 'OLLAMA_AVAILABLE', False)
         if not is_llm_ready():
-            if not llm_extraction.OLLAMA_AVAILABLE:
+            if not ollama_lib_available:
                 st.error("""
                 **Ollama library is not installed.** This is required for LLM extraction.
-                
+
                 Run this command in your terminal to install it:
                 ```
                 pip install ollama
                 ```
-                
+
                 Then restart the application. You can still proceed with processing, but all personnel will be marked as 'Unknown'.
                 """)
             else:
                 st.warning(f"LLM ({settings.LLM_PROVIDER}) is configured but not reachable at {settings.OLLAMA_BASE_URL}. Name extraction will be skipped or may fail.")
-            
+
             # Add a checkbox option to proceed without LLM
-            st.session_state.skip_llm = st.checkbox("Proceed without LLM extraction (all personnel will be marked as 'Unknown')", 
-                                                  value=True, 
+            st.session_state.skip_llm = st.checkbox("Proceed without LLM extraction (all personnel will be marked as 'Unknown')",
+                                                  value=True,
                                                   key="skip_llm_checkbox")
-            
+
             if not st.session_state.skip_llm:
                 llm_ok = False  # Only block processing if user unchecks the box
             else:
@@ -139,123 +155,156 @@ if st.session_state.get('raw_df') is not None:
                     st.session_state.preprocessed_df = preprocessed_df
                     st.write(f"Preprocessing done: {len(preprocessed_df)} events remaining.")
                     logger.info(f"Preprocessing complete: {len(preprocessed_df)} events.")
-                    
+
                     # Generate a unique batch ID for this processing job
                     import uuid
                     batch_id = f"batch_{uuid.uuid4().hex[:8]}_{int(time.time())}"
                     st.session_state.current_batch_id = batch_id
-                    
-                    # 2. LLM Extraction with guaranteed console output
+
+                    # 2. LLM Extraction
                     if llm_enabled and llm_ok:
-                        st.write("Step 2: Extracting personnel names from calendar events...")
-                        
-                        # Import the direct extractor module that displays all console output
+                        st.write("Step 2: Extracting personnel names from calendar events (Simplified Loop)...")
                         try:
-                            from functions.llm_extraction.direct_extractor import extract_with_direct_output
+                            st.info("Processing calendar entries with simplified LLM extraction loop...")
+                            llm_client = get_ollama_client() # Get the client
+                            if not llm_client:
+                                raise Exception("Failed to get LLM Client.")
                             
-                            st.info("Processing calendar entries with full console output...")
-                            # Use our direct extraction implementation that shows all Ollama responses
-                            llm_processed_df = extract_with_direct_output(preprocessed_df)
+                            summaries = preprocessed_df['summary'].tolist()
+                            canonical_names_list = st.session_state.get('canonical_names', [])
+                            personnel_results = [] # List for personnel names
+                            event_type_results = [] # List for event types
+                            total_summaries = len(summaries)
+                            extraction_errors = 0
+
+                            st_progress_bar = st.progress(0, text="Starting simplified extraction...")
+
+                            for i, summary in enumerate(summaries):
+                                try:
+                                    logger.info(f"Simple Loop - Processing event {i+1}/{total_summaries}...")
+                                    # Directly call the core extraction logic (no retry here for simplicity)
+                                    # Unpack the tuple result
+                                    personnel_result, event_type_result = _extract_single_physicist_llm(summary, llm_client, canonical_names_list)
+                                    personnel_results.append(personnel_result)
+                                    event_type_results.append(event_type_result)
+                                    logger.info(f"Simple Loop - Event {i+1} result: Personnel={personnel_result}, EventType='{event_type_result}'")
+                                except Exception as loop_exc:
+                                     logger.error(f"Simple Loop - Error processing event {i+1}: {loop_exc}", exc_info=True)
+                                     personnel_results.append(["Unknown_Error"])
+                                     event_type_results.append("Unknown_Error")
+                                     extraction_errors += 1
+                                
+                                # Update progress
+                                progress_percent = int(((i + 1) / total_summaries) * 100)
+                                st_progress_bar.progress(progress_percent, text=f"Extracting event {i+1}/{total_summaries}...")
+                                time.sleep(0.1) # Small delay
+
+                            st_progress_bar.progress(100, text="Simplified extraction complete.")
+                            
+                            # Create the dataframe with results
+                            llm_processed_df = preprocessed_df.copy()
+                            llm_processed_df['extracted_personnel'] = personnel_results
+                            llm_processed_df['extracted_event_type'] = event_type_results # Add new column
                             st.session_state.llm_processed_df = llm_processed_df
-                            
-                            st.success("LLM extraction finished with full console output.")
-                            logger.info("LLM extraction complete with direct console output.")
-                            
+
+                            st.success(f"Simplified LLM extraction finished. Errors: {extraction_errors}")
+                            logger.info(f"Simplified LLM extraction complete. Errors: {extraction_errors}")
+
                         except Exception as e:
-                            logger.warning(f"Direct extractor failed: {e}. Trying standard extraction...")
-                            st.warning(f"Direct extractor failed: {e}. Trying standard methods...")
-                            
-                            # Fall back to standard extraction if direct method fails
-                            try:
-                                # Use the sequential extraction method
-                                llm_processed_df = llm_extraction.run_llm_extraction_sequential(preprocessed_df)
-                                st.session_state.llm_processed_df = llm_processed_df
-                                st.success("LLM extraction completed using standard method.")
-                            except Exception as e2:
-                                logger.error(f"All extraction methods failed: {e2}")
-                                st.error(f"Extraction failed: {e2}. Using Unknown for all events.")
-                                # Create placeholder with Unknown values
-                                preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                                st.session_state.llm_processed_df = preprocessed_df
+                            logger.error(f"Simplified LLM extraction loop failed: {e}", exc_info=True) # Log full traceback
+                            st.error(f"Extraction failed: {e}. Using Unknown for all events.")
+                            # Create placeholder with Unknown values
+                            temp_df = preprocessed_df.copy()
+                            temp_df['extracted_personnel'] = [['Unknown']] * len(temp_df)
+                            st.session_state.llm_processed_df = temp_df
+                            llm_processed_df = temp_df # Ensure llm_processed_df is assigned
                     else:
                         st.warning("Skipping LLM extraction (disabled or not ready). Assigning 'Unknown'.")
                         # Create placeholder columns if skipping LLM
-                        preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                        st.session_state.llm_processed_df = preprocessed_df # Use preprocessed df as base                    # 3. Normalize Extracted Personnel Names
-                    st.write("Step 3: Normalizing extracted names...")
-                    
-                    # Add defensive type check and conversion
-                    if not isinstance(st.session_state.llm_processed_df, pd.DataFrame):
-                        logger.error(f"llm_processed_df is not a DataFrame, it's a {type(st.session_state.llm_processed_df)}. Converting to DataFrame.")
-                        st.error(f"Internal error: Expected DataFrame but got {type(st.session_state.llm_processed_df)}. Attempting to fix...")
-                        
-                        # Attempt to convert or fall back to preprocessed_df
-                        try:
-                            if isinstance(st.session_state.llm_processed_df, list):
-                                # If it's a list of extracted personnel, try to add it back to preprocessed_df
-                                if len(st.session_state.llm_processed_df) == len(preprocessed_df):
-                                    temp_df = preprocessed_df.copy()
-                                    temp_df['extracted_personnel'] = st.session_state.llm_processed_df
-                                    st.session_state.llm_processed_df = temp_df
-                                else:
-                                    # Fall back to preprocessed_df with Unknown personnel
-                                    preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                                    st.session_state.llm_processed_df = preprocessed_df
-                            else:
-                                # For any other type, fall back to preprocessed_df
-                                preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                                st.session_state.llm_processed_df = preprocessed_df
-                        except Exception as e:
-                            logger.error(f"Error fixing DataFrame: {e}")
-                            preprocessed_df['extracted_personnel'] = [['Unknown']] * len(preprocessed_df)
-                            st.session_state.llm_processed_df = preprocessed_df
-                    
-                    try:
-                        normalized_df = llm_extraction.normalize_extracted_personnel(st.session_state.llm_processed_df)
-                        st.session_state.normalized_df = normalized_df
-                        st.write("Normalization finished.")
-                        logger.info("Normalization complete.")
-                    except Exception as e:
-                        logger.error(f"Normalization error: {e}", exc_info=True)
-                        st.error(f"Error during normalization: {e}. Using default values.")
-                        # Create a simple normalized_df with assigned_personnel column
-                        st.session_state.llm_processed_df['assigned_personnel'] = [['Unknown']] * len(st.session_state.llm_processed_df)
-                        st.session_state.normalized_df = st.session_state.llm_processed_df.copy()
+                        temp_df = preprocessed_df.copy()
+                        temp_df['extracted_personnel'] = [['Unknown']] * len(temp_df)
+                        st.session_state.llm_processed_df = temp_df # Use preprocessed df as base
+                        llm_processed_df = temp_df # Ensure llm_processed_df is assigned
 
-                    # Display sample of normalized data
-                    st.write("Sample of data after normalization:")
-                    st.dataframe(normalized_df[['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'assigned_personnel']].head())
+                    # 3. Normalize Extracted Personnel Names
+                    st.write("Step 3: Normalizing extracted names...")
+
+                    # Ensure llm_processed_df is a DataFrame before proceeding
+                    if not isinstance(llm_processed_df, pd.DataFrame):
+                        logger.error(f"llm_processed_df is not a DataFrame after Step 2, it's a {type(llm_processed_df)}. Falling back.")
+                        st.error(f"Internal error: LLM processing step did not return a DataFrame. Using default values.")
+                        # Fallback: Create DataFrame with 'Unknown' assigned personnel
+                        temp_df = preprocessed_df.copy()
+                        temp_df['extracted_personnel'] = [['Unknown']] * len(temp_df)
+                        temp_df['assigned_personnel'] = [['Unknown']] * len(temp_df)
+                        st.session_state.llm_processed_df = temp_df # Store the fallback df
+                        st.session_state.normalized_df = temp_df
+                        normalized_df = temp_df # Ensure normalized_df is assigned
+                    else:
+                        # Proceed with normalization
+                        try:
+                            # Call the correctly imported function
+                            normalized_df = normalize_extracted_personnel(llm_processed_df)
+                            st.session_state.normalized_df = normalized_df
+                            st.write("Normalization finished.")
+                            logger.info("Normalization complete.")
+                        except Exception as e:
+                            logger.error(f"Normalization error: {e}", exc_info=True)
+                            st.error(f"Error during normalization: {e}. Using default values.")
+                            # Fallback: Create a simple normalized_df with assigned_personnel column
+                            temp_df = llm_processed_df.copy() # Use the df from LLM step
+                            temp_df['assigned_personnel'] = [['Unknown']] * len(temp_df)
+                            st.session_state.normalized_df = temp_df
+                            normalized_df = temp_df # Ensure normalized_df is assigned
+
+                    # Display sample of normalized data (ensure normalized_df exists)
+                    if normalized_df is not None and not normalized_df.empty:
+                         st.write("Sample of data after normalization:")
+                         # Add the new event type column to the display
+                         display_cols = [col for col in ['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'extracted_event_type', 'assigned_personnel'] if col in normalized_df.columns]
+                         st.dataframe(normalized_df[display_cols].head())
+                    else:
+                         st.warning("No data available to display after normalization step.")
+
 
                     # 4. Explode by Personnel for Analysis
                     st.write("Step 4: Preparing data for analysis (exploding by personnel)...")
                     # Use the 'assigned_personnel' column created by normalization
-                    analysis_ready_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
-                    if analysis_ready_df is None or analysis_ready_df.empty:
-                        st.error("Exploding data failed or resulted in empty data. Check logs.")
+                    # Use normalized_df which is guaranteed to exist at this point
+                    if normalized_df is not None and 'assigned_personnel' in normalized_df.columns:
+                        analysis_ready_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
+                        if analysis_ready_df is None or analysis_ready_df.empty:
+                            st.error("Exploding data failed or resulted in empty data. Check logs.")
+                            st.stop()
+                        st.session_state.analysis_ready_df = analysis_ready_df
+                        st.write(f"Data ready for analysis: {len(analysis_ready_df)} rows after exploding.")
+                        logger.info(f"Explosion complete: {len(analysis_ready_df)} analysis rows.")
+                    else:
+                        st.error("Cannot prepare data for analysis: 'assigned_personnel' column missing after normalization.")
                         st.stop()
-                    st.session_state.analysis_ready_df = analysis_ready_df
-                    st.write(f"Data ready for analysis: {len(analysis_ready_df)} rows after exploding.")
-                    logger.info(f"Explosion complete: {len(analysis_ready_df)} analysis rows.")                    # Mark processing as complete and ensure data is available for analysis
+
+                    # Mark processing as complete and ensure data is available for analysis
                     st.session_state.data_processed = True
-                    
+
                     # Always store the analysis dataframe in session state for the Analysis page
                     if 'analysis_data' not in st.session_state:
                         st.session_state.analysis_data = {}
-                    
+
                     # Store the current batch with a timestamp for the Analysis page
-                    current_batch_key = f"batch_{int(time.time())}"
+                    current_batch_key = f"batch_{int(time.time())}" # Use timestamp as part of key
                     st.session_state.analysis_data[current_batch_key] = {
                         'df': analysis_ready_df,
                         'timestamp': time.time(),
                         'source': st.session_state.uploaded_filename,
                         'processed_count': len(analysis_ready_df)
                     }
-                    
+
                     # Store the most recent batch ID for easy access
                     st.session_state.most_recent_batch = current_batch_key
-                      # 5. Save processed data to PostgreSQL database (if enabled)
+
+                    # 5. Save processed data to PostgreSQL database (if enabled)
                     if settings.DB_ENABLED:
-                        from functions import db_manager
+                        # from functions import db_manager # Already imported
                         st.write("Step 5: Saving processed data to PostgreSQL database...")
                         try:
                             # Use the new batch saving function with progress indicators
@@ -263,36 +312,36 @@ if st.session_state.get('raw_df') is not None:
                             total_records = len(analysis_ready_df)
                             progress_bar = st.progress(0.0)
                             status_text = st.empty()
-                            
+
                             # Save in batches with visual feedback
                             status_text.write("Starting database save operation in batches...")
-                            
-                            # Use a batch ID if one exists, otherwise use the current batch key
-                            current_batch_id = st.session_state.get('current_batch_id', current_batch_key)
-                            
+
+                            # Use the batch ID generated earlier
+                            current_db_batch_id = st.session_state.get('current_batch_id', current_batch_key) # Use generated batch_id
+
                             db_save_success, saved_count = db_manager.save_processed_data_in_batches(
                                 analysis_ready_df,
-                                batch_id=current_batch_id,
+                                batch_id=current_db_batch_id,
                                 batch_size=batch_size
                             )
-                            
+
                             # Update progress bar to 100% when complete
                             progress_bar.progress(1.0)
-                            
+
                             if db_save_success:
                                 st.success(f"Successfully saved {saved_count}/{total_records} records to PostgreSQL database at {settings.DB_HOST}.")
                                 logger.info(f"Successfully saved {saved_count}/{total_records} records to database.")
-                                
+
                                 # Mark the calendar file as processed only if saving was successful
-                                if current_batch_id and hasattr(db_manager, 'mark_calendar_file_as_processed'):
-                                    db_manager.mark_calendar_file_as_processed(current_batch_id)
+                                if current_db_batch_id and hasattr(db_manager, 'mark_calendar_file_as_processed'):
+                                    db_manager.mark_calendar_file_as_processed(current_db_batch_id)
                             else:
                                 st.warning(f"Database save incomplete: Only saved {saved_count}/{total_records} records. Check logs for details.")
                                 logger.warning(f"Database save operation incomplete: {saved_count}/{total_records} records saved.")
                         except Exception as db_e:
                             st.error(f"Error saving to database: {db_e}")
                             logger.error(f"Database save error: {db_e}", exc_info=True)
-                    
+
                     end_time = time.time()
                     st.success(f"Pipeline finished successfully in {end_time - start_time:.2f} seconds! Navigate to the 'Analysis' page.")
                     logger.info(f"Processing pipeline finished in {end_time - start_time:.2f} seconds.")

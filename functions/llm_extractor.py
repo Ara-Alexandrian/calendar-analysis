@@ -9,8 +9,8 @@ from typing import List, Dict, Any, Optional
 # Import from our simplified Ollama client for service check
 from functions.llm_extraction.ollama_client import is_ollama_ready
 
-# Import our optimized direct parallel processor for dual RTX 3090s
-from functions.llm_extraction.direct_parallel_processor import DirectParallelProcessor
+# Import our sequential processor for event-by-event processing
+from functions.llm_extraction.sequential_processor import SequentialProcessor
 
 # Import settings
 from config import settings
@@ -62,17 +62,16 @@ def process_events_with_llm(events_df: pd.DataFrame) -> pd.DataFrame:
                 progress = completed / total if total > 0 else 0
                 st.session_state['progress'] = progress
                 st.session_state['progress_text'] = f"{completed}/{total} events processed"
-                
-        # Create the direct parallel processor optimized for dual RTX 3090s
-        logger.info("Starting direct parallel processing with dual RTX 3090s NVLINK optimization")
-        processor = DirectParallelProcessor(progress_callback=update_progress)
+                  # Create the sequential processor for one-by-one event processing
+        logger.info("Starting sequential processing of calendar events")
+        processor = SequentialProcessor(progress_callback=update_progress)
         
-        # Process the dataframe directly with our optimized processor
+        # Process the dataframe sequentially, one event at a time
         start_time = pd.Timestamp.now()
         result_df = processor.process_dataframe(events_df, summary_col="summary", canonical_names=canonical_names)
         elapsed = (pd.Timestamp.now() - start_time).total_seconds()
         
-        logger.info(f"Direct parallel processing complete in {elapsed:.2f} seconds")
+        logger.info(f"Sequential processing complete in {elapsed:.2f} seconds")
         logger.info(f"Processed {len(events_df)} events with LLM extraction")
         
         return result_df

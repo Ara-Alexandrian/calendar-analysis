@@ -17,7 +17,6 @@ from config import settings
 from functions import config_manager
 from .client import get_llm_client, is_llm_ready, restart_ollama_server
 from .utils import get_persistent_progress_bar
-from .smart_router import get_router
 
 try:
     from tqdm import tqdm
@@ -29,37 +28,28 @@ except ImportError:
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: list[str]) -> list[str] | str:
+def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: list[str]) -> tuple[list[str], str]:
     """
-    Internal function to extract names for a single summary using the LLM.
-    Returns list of names on success, or "Unknown" / "Unknown_Error" on failure.
+    Internal function to extract names and event type for a single summary using the LLM.
+    Returns tuple: (list of personnel names, event_type string) on success, 
+    or (["Unknown"], "Unknown") / (["Unknown_Error"], "Unknown_Error") on failure.
     """
     if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
         logger.debug("Skipping extraction for empty or non-string summary.")
-        return ["Unknown"]  # Return list for consistency
-    
-    # If USE_SMART_ROUTER is enabled, use the router for extraction (ignores llm_client)
-    if getattr(settings, "USE_SMART_ROUTER", True):
-        try:
-            router = get_router()
-            return router.extract_personnel(summary, canonical_names)
-        except Exception as e:
-            logger.error(f"Smart router extraction failed: {e}, falling back to direct client")
-            # Fall back to direct client if router fails
+        return ["Unknown"], "Unknown" # Return tuple
+      # Smart router functionality has been removed - always use direct client approach
+    # No need for routing since we're only using one extraction method now
     
     # Traditional client approach when router is disabled or as fallback
     if not llm_client:
         # Should not happen if called correctly, but safety check
-        return "Unknown_Error"
+        return ["Unknown_Error"], "Unknown_Error" # Return tuple
         
     # Construct the prompt
     prompt = f"""
-    Your task is to identify physicist names from the provided calendar event summary.
-    You are given a specific list of known canonical physicist names.
-    Analyze the summary and identify ONLY the canonical names from the list below that are mentioned or clearly referenced in the summary.
-    Consider variations in names (e.g., initials, last names only, common misspellings if obvious) but map them back EXACTLY to a name present in the canonical list.
-    Do not guess or include names not on the list. If multiple physicists are mentioned, include all of them.
-    If no physicists from the list are clearly identified, return an empty list.
+    Your task is to analyze the provided calendar event summary and extract two pieces of information:
+    1.  **Personnel Names:** Identify ONLY the canonical physicist names from the provided list that are mentioned or clearly referenced in the summary. Consider variations (initials, last names) but map them back EXACTLY to a name in the list. If multiple names are found, include all. If none are found, use an empty list `[]`.
+    2.  **Event Type:** Identify the primary service or event type described in the summary (e.g., "Post GK", "BR 4D", "HOU BH", "GK Tx", "Consult", "Meeting", "Admin"). Be concise. If the type is unclear, return "Unknown".
 
     Known Canonical Physicist Names:
     {json.dumps(canonical_names, indent=2)}
@@ -67,14 +57,20 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     Event Summary:
     "{summary}"
 
-    IMPORTANT: Respond ONLY with a valid JSON array. Do not use any other JSON format.
-    Correct format examples:
-    []
-    ["D. Solis"]
-    ["C. Chu", "D. Solis"]
+    IMPORTANT: Respond ONLY with a single, valid JSON object containing two keys: "personnel" (a JSON array of strings) and "event_type" (a JSON string).
+    
+    Examples of CORRECT responses:
+    {{"personnel": [], "event_type": "Unknown"}}
+    {{"personnel": ["D. Solis"], "event_type": "GK Tx SBRT"}}
+    {{"personnel": ["C. Chu", "Wood"], "event_type": "SpaceOAR VUE"}}
+    {{"personnel": ["G. Pitcher", "E. Chorniak"], "event_type": "WH HDR CYL"}}
 
-    Never respond with JSON objects like {{"name": "value"}} or {{"names": [...]}}.
-    Do not add explanations or surrounding text. ONLY the JSON array.
+    Examples of INCORRECT responses (DO NOT USE THESE FORMATS):
+    ["D. Solis"] # Incorrect: Not a JSON object
+    {{"names": ["D. Solis"]}} # Incorrect: Wrong key name
+    "Post GK" # Incorrect: Not a JSON object
+
+    Absolutely NO surrounding text or explanations. Your entire response must be JUST the JSON object.
     """
 
     try:
@@ -89,11 +85,11 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
         response = llm_client.chat(
             model=settings.LLM_MODEL,
             messages=[
-                {"role": "system", "content": "You are an assistant that extracts specific names from text based on a provided list and outputs ONLY a valid JSON list containing those names."},
+                {"role": "system", "content": "You are an assistant that extracts specific personnel names and the event type from text based on a provided list and context. You output ONLY a valid JSON object with keys 'personnel' (list of strings) and 'event_type' (string)."},
                 {"role": "user", "content": prompt}
             ],
             format='json', # Request JSON format
-            options={'temperature': 0.1, 'timeout': timeout_seconds} # Add timeout and low temperature for deterministic output
+            options={'temperature': 0.1, 'timeout': timeout_seconds} # Add timeout and low temperature
         )
         
         elapsed_time = time.time() - start_time
@@ -102,242 +98,68 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
         content = response.get('message', {}).get('content', '')
         if not content:
              logger.warning(f"LLM returned empty content for summary: '{summary[:50]}...'")
-             return ["Unknown"] # Treat empty content as no names found
+             return ["Unknown"], "Unknown" # Return tuple
 
         # --- Enhanced JSON Parsing Logic ---
-        extracted_names = []
+        extracted_personnel = []
+        extracted_event_type = "Unknown"
         try:
-            # New preprocessing step to handle malformed responses that look like arrays inside curly braces
-            # E.g., '{"D. Solis"}' or '{"G. Pitcher, E. Chorniak, Wood"}'
-            if content.startswith('{') and ('"' in content or "'" in content):
-                # Check if it looks like a malformed "array as dict" response
-                if ':' not in content or ((':' in content) and (',' in content and content.find(',') < content.find(':'))):
-                    # Replace curly braces with square brackets
-                    fixed_content = content.replace('{', '[').replace('}', ']')
-                    logger.info(f"Fixed malformed JSON response: {content[:50]}... to {fixed_content[:50]}...")
-                    
-                    # Additional fixes for malformed JSON lists
-                    # 1. Try to identify and fix broken string format without commas
-                    if fixed_content.count('"') >= 2 and ',' not in fixed_content:
-                        # Handle case where there's a single name without proper commas: ["D. Solis"              ]
-                        name_match = re.search(r'"([^"]+)"', fixed_content)
-                        if name_match:
-                            name = name_match.group(1).strip()
-                            fixed_content = f'["{name}"]'
-                            logger.info(f"Reformatted single name response to: {fixed_content}")
-                    
-                    # 2. Handle comments and trailing text
-                    if '//' in fixed_content:
-                        # Remove everything after //
-                        fixed_content = fixed_content.split('//')[0].strip()
-                        if fixed_content.endswith(','):
-                            fixed_content = fixed_content[:-1]  # Remove trailing comma
-                        if not fixed_content.endswith(']'):
-                            fixed_content += ']'  # Add closing bracket if needed
-                        logger.info(f"Removed comments from JSON: {fixed_content}")
-                    
-                    # 3. Fix unquoted items in list
-                    if re.search(r',\s*[A-Za-z][^",\]]*[,\]]', fixed_content):
-                        # Find unquoted names like ['"G. Pitcher", E. Chorniak, Wood, King]'
-                        fixed_parts = []
-                        in_quotes = False
-                        current_part = ""
-                        
-                        for char in fixed_content:
-                            if char == '"' and (not current_part.endswith('\\')):
-                                in_quotes = not in_quotes
-                            
-                            current_part += char
-                            
-                            if not in_quotes and char in ',]':
-                                if current_part.strip().startswith(','):
-                                    current_part = current_part.strip()[1:].strip()
-                                
-                                # If we have a non-quoted item
-                                if current_part.strip() and not (current_part.strip().startswith('"') and current_part.strip().endswith('"')):
-                                    # Not already quoted and not just punctuation
-                                    if re.search(r'[A-Za-z]', current_part):
-                                        part = current_part.strip()
-                                        if part.endswith(',') or part.endswith(']'):
-                                            part = part[:-1].strip()
-                                        fixed_parts.append(f'"{part}"')
-                                        if char == ',':
-                                            fixed_parts.append(',')
-                                        elif char == ']':
-                                            fixed_parts.append(']')
-                                    else:
-                                        fixed_parts.append(current_part)
-                                else:
-                                    fixed_parts.append(current_part)
-                                
-                                current_part = ""
+            # Attempt to parse the content as JSON object
+            extracted_data = json.loads(content)
 
-                        # Build the corrected JSON
-                        if fixed_parts:
-                            fixed_content = ''.join(fixed_parts)
-                            if not fixed_content.startswith('['):
-                                fixed_content = '[' + fixed_content
-                            if not fixed_content.endswith(']'):
-                                fixed_content += ']'
-                            logger.info(f"Fixed unquoted items: {fixed_content}")
-                    
-                    content = fixed_content
-
-            try:
-                extracted_data = json.loads(content)
-            except json.JSONDecodeError as json_err:
-                # Last resort fallback for very malformed responses
-                # Try to extract names directly using regex
-                logger.warning(f"JSON decode error: {json_err}. Attempting regex fallback.")
-                
-                # Special handling for unterminated strings
-                if 'Unterminated string' in str(json_err) and content.startswith('['):
-                    # Try to fix the unterminated string by adding a closing quote and bracket if needed
-                    try:
-                        # First try direct content extraction - this works with many of the error cases
-                        if content.startswith('["') and not content.endswith('"]'):
-                            # Extract content between brackets, ignoring quotes issues
-                            inner_content = content[2:].rstrip(']').strip()
-                            # For case ["D. Solis" - extract just the name
-                            if '"' in inner_content:
-                                parts = inner_content.split('"', 1)[0].strip()
-                                if parts:  # Make sure we got something
-                                    logger.info(f"Simple unterminated string fix: {parts}")
-                                    return [parts]
-                        
-                        # More complex parsing for multi-name cases
-                        # Extract all content between the square brackets
-                        bracket_content = re.search(r'\[(.*?)(?:\]|$)', content)
-                        if bracket_content:
-                            # Get the content and ensure proper format with quotes
-                            names_text = bracket_content.group(1).strip()
-                            
-                            # Handle missing closing quotes in strings like ["D. Solis"...
-                            if names_text.startswith('"') and '",' not in names_text and '"]' not in names_text:
-                                name = re.search(r'"([^"]+)', names_text)
-                                if name:
-                                    extracted = name.group(1).strip()
-                                    logger.info(f"Fixed unclosed quote in single name: {extracted}")
-                                    return [extracted]
-                            
-                            # Handle multiple names in a list with comma separation
-                            # Split by commas, strip each part, and put in proper JSON format
-                            name_parts = [part.strip() for part in names_text.split(',')]
-                            # Remove any trailing comments or text after //
-                            name_parts = [part.split('//')[0].strip() for part in name_parts]
-                            # Remove quotes from parts that have them
-                            name_parts = [part.strip('"') for part in name_parts]
-                            # Filter empty parts
-                            name_parts = [part for part in name_parts if part]
-                            
-                            # Remove any text in parentheses that appears after names like "(Note:..."
-                            clean_parts = []
-                            for part in name_parts:
-                                if "(" in part:
-                                    clean_parts.append(part.split("(")[0].strip())
-                                else:
-                                    clean_parts.append(part)
-                            
-                            logger.info(f"Unterminated string fallback extracted: {clean_parts}")
-                            return clean_parts
-                    except Exception as e:
-                        logger.error(f"Error in unterminated string handling: {e}")
-                
-                # Standard regex fallback for quoted strings
-                name_matches = re.findall(r'"([^"]+)"', content)
-                if name_matches:
-                    logger.info(f"Regex fallback extracted: {name_matches}")
-                    return name_matches
+            if isinstance(extracted_data, dict):
+                # Extract personnel list (default to empty list if key missing or not a list)
+                personnel_list = extracted_data.get('personnel', [])
+                if isinstance(personnel_list, list):
+                     # Validate items are strings
+                    extracted_personnel = [item for item in personnel_list if isinstance(item, str)]
                 else:
-                    # Last attempt: extract anything that looks like a name between commas
-                    comma_separated = re.split(r'[\[\],]', content)
-                    potential_names = [item.strip() for item in comma_separated if item.strip()]
-                    if potential_names:
-                        logger.info(f"Last-resort comma split extracted: {potential_names}")
-                        return potential_names
-                    
-                    logger.error(f"Failed to decode JSON response from LLM for '{summary[:30]}...': {content[:100]}. Error: {str(json_err)}")
-                    return ["Unknown_Error"]  # Indicate a structural error from LLM
+                    logger.warning(f"LLM response 'personnel' key was not a list: {personnel_list}")
+                    extracted_personnel = [] # Default to empty list
 
-            # 1. Ideal case: Is it directly a list?
-            if isinstance(extracted_data, list):
-                # Validate items are strings
-                extracted_names = [item for item in extracted_data if isinstance(item, str)]
-                logger.debug(f"LLM returned a direct list for '{summary[:30]}...': {extracted_names}")
-
-            # 2. Common case: Is it a dictionary containing a list under common keys?
-            elif isinstance(extracted_data, dict):
-                logger.debug(f"LLM returned dict for '{summary[:30]}...': {content[:100]}")
-                found_list = None
-                possible_keys = ['names', 'physicists', 'identified_names', 'canonical_names', 'result', 'output']
-                for key in possible_keys:
-                    if key in extracted_data and isinstance(extracted_data.get(key), list):
-                        potential_list = extracted_data[key]
-                        # Validate items are strings
-                        found_list = [item for item in potential_list if isinstance(item, str)]
-                        logger.debug(f"Found list under key '{key}'")
-                        break # Found it
-
-                # Special case: Handle single key-value pairs where value is a name
-                # Example: {"A": "Wood"} - extract "Wood" as a name
-                if found_list is None and len(extracted_data) <= 3:  # Only for small dicts
-                    for key, value in extracted_data.items():
-                        if isinstance(value, str) and value:  # If value is a non-empty string
-                            # Check if value is likely a name (in canonical list or has letter characters)
-                            if value in canonical_names or re.search(r'[A-Za-z]', value):
-                                found_list = [value]
-                                logger.info(f"Extracted name from simple key-value pair: {value}")
-                                break
-
-                # Fallback: check *any* value that is a list of strings
-                if found_list is None:
-                    for value in extracted_data.values():
-                        if isinstance(value, list):
-                            potential_list = value
-                            # Validate items are strings
-                            string_list = [item for item in potential_list if isinstance(item, str)]
-                            if string_list: # Use the first non-empty list of strings found
-                                found_list = string_list
-                                logger.debug("Found list as a dictionary value (unknown key)")
-                                break
-
-                if found_list is not None:
-                    extracted_names = found_list
+                # Extract event type string (default to "Unknown" if key missing or not a string)
+                event_type_str = extracted_data.get('event_type', 'Unknown')
+                if isinstance(event_type_str, str) and event_type_str.strip():
+                    extracted_event_type = event_type_str.strip()
                 else:
-                    logger.warning(f"LLM returned dict, but failed to extract expected list structure: {content[:100]}")
-                    extracted_names = [] # Treat as no names found
+                    logger.warning(f"LLM response 'event_type' key was not a valid string: {event_type_str}")
+                    extracted_event_type = "Unknown" # Default to Unknown
 
-            # 3. Handle unexpected format
+                logger.debug(f"LLM parsed object: personnel={extracted_personnel}, event_type='{extracted_event_type}'")
+
             else:
-                 logger.warning(f"LLM (JSON mode) returned unexpected format (not list or dict): {content[:100]}")
-                 extracted_names = [] # Treat as no names found
+                logger.warning(f"LLM (JSON mode) returned unexpected format (not dict): {content[:100]}")
+                # Keep defaults: extracted_personnel = [], extracted_event_type = "Unknown"
 
         except JSONDecodeError as json_err:
-            logger.error(f"Failed to decode JSON response from LLM for '{summary[:30]}...': {content[:100]}. Error: {str(json_err)}")
-            return "Unknown_Error" # Indicate a structural error from LLM
+            logger.error(f"Failed to decode JSON object response from LLM for '{summary[:30]}...': {content[:100]}. Error: {str(json_err)}")
+            return ["Unknown_Error"], "Unknown_Error" # Indicate a structural error from LLM
         except Exception as e:
              logger.error(f"Error processing LLM response content structure: {e}\nResponse content: {content[:100]}")
-             return "Unknown_Error"
+             return ["Unknown_Error"], "Unknown_Error"
 
         # --- Validation Against Canonical List ---
-        validated_names = [name for name in extracted_names if name in canonical_names]
+        validated_names = [name for name in extracted_personnel if name in canonical_names]
 
         if not validated_names:
             logger.debug(f"LLM found no known physicists in: '{summary[:30]}...' (Raw response: {content[:50]}...)")
-            return ["Unknown"] # No known names found or returned list was empty
+            # Return ["Unknown"] for personnel, but keep the extracted event type if valid
+            return ["Unknown"], extracted_event_type 
         else:
             logger.debug(f"LLM validated {validated_names} in '{summary[:30]}...'")
-            return validated_names # Return list of validated canonical names
+            # Return validated names and the extracted event type
+            return validated_names, extracted_event_type 
 
     except Exception as e:
         # Catch Ollama client errors / network errors etc. during the API call
         logger.error(f"Error calling Ollama API for summary '{summary[:30]}...': {e}")
         # Indicate an error occurred during the call
-        return "Unknown_Error"
+        return ["Unknown_Error"], "Unknown_Error"
 
-def extract_personnel_with_llm(summary: str, llm_client, canonical_names: list[str], retry_count=3) -> list[str] | str:
+def extract_personnel_with_llm(summary: str, llm_client, canonical_names: list[str], retry_count=3) -> tuple[list[str], str]:
     """
-    Extract personnel from event data with improved error handling and retry logic
+    Extract personnel and event type from event data with improved error handling and retry logic.
+    Returns a tuple: (personnel_list, event_type_string)
     """
     if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
         return ["Unknown"]  # Return list for consistency
@@ -357,36 +179,38 @@ def extract_personnel_with_llm(summary: str, llm_client, canonical_names: list[s
         
         # Return fallback after all retries fail
         logger.error(f"All retry attempts failed for '{summary[:30]}...'")
-        return ["Unknown_Error"]
+        return ["Unknown_Error"], "Unknown_Error" # Return tuple for error
 
 def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Runs LLM extraction in parallel on the 'summary' column of the DataFrame.
+    Runs LLM extraction (personnel + event type) in parallel on the 'summary' column.
     If parallel processing fails, will fall back to sequential processing.
 
     Args:
         df: DataFrame with a 'summary' column.
 
     Returns:
-        DataFrame with a new 'extracted_personnel' column containing lists of names
-        or error strings ('Unknown', 'Unknown_Error').
+        DataFrame with new 'extracted_personnel' and 'extracted_event_type' columns.
     """
     if not is_llm_ready():
         st.error("LLM client is not available. Cannot perform extraction.")
-        df['extracted_personnel'] = [["Unknown_Error"]] * len(df) # Add column indicating failure
+        df['extracted_personnel'] = [["Unknown_Error"]] * len(df) 
+        df['extracted_event_type'] = ["Unknown_Error"] * len(df)
         return df
 
     if 'summary' not in df.columns:
         logger.error("'summary' column not found in DataFrame. Cannot extract.")
         st.error("Input data is missing the 'summary' column.")
         df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
+        df['extracted_event_type'] = ["Unknown_Error"] * len(df)
         return df
 
     df_copy = df.copy()
     df_copy['summary'] = df_copy['summary'].fillna('') # Ensure no NaN summaries
 
     summaries = df_copy['summary'].tolist()
-    results = [None] * len(summaries) # Initialize results list
+    personnel_results = [None] * len(summaries) # Initialize results lists
+    event_type_results = [None] * len(summaries)
 
     llm_client = get_llm_client() # Get cached client
     _, _, canonical_names = config_manager.get_personnel_details() # Get current names
@@ -395,6 +219,7 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
         logger.error("Cannot run LLM extraction: No canonical names found in configuration.")
         st.error("Personnel configuration is empty. Please configure personnel in the Admin page.")
         df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
+        df['extracted_event_type'] = ["Unknown_Error"] * len(df)
         return df
 
     start_time = time.time()
@@ -738,8 +563,41 @@ def run_llm_extraction_sequential(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with a new 'extracted_personnel' column containing lists of names
         or error strings ('Unknown', 'Unknown_Error').
     """
-    # Return the ultra_basic_extraction implementation which does sequential processing
-    return ultra_basic_extraction(df)
+    if not is_llm_ready():
+        logger.warning("LLM client is not available. Cannot perform extraction.")
+        df['extracted_personnel'] = [["Unknown_Error"]] * len(df) # Add column indicating failure
+        return df
+
+    if 'summary' not in df.columns:
+        logger.error("'summary' column not found in DataFrame. Cannot extract.")
+        df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
+        return df
+        
+    # Process sequentially using our new sequential processor
+    try:
+        # Get canonical names for validation
+        _, _, canonical_names = config_manager.get_personnel_details()
+        
+        # Initialize sequential processor for reliable event-by-event processing
+        from .sequential_processor import SequentialProcessor
+        processor = SequentialProcessor()
+        
+        # Log start of sequential processing
+        logger.info(f"Starting sequential processing of {len(df)} events...")
+        
+        # Process the dataframe with sequential processor
+        start_time = time.time()
+        result_df = processor.process_dataframe(df, summary_col="summary", canonical_names=canonical_names)
+        elapsed = time.time() - start_time
+        
+        logger.info(f"Sequential processing complete in {elapsed:.2f} seconds")
+        return result_df
+        
+    except Exception as e:
+        logger.error(f"Error in sequential extraction: {e}")
+        # Add an empty extraction column as fallback
+        df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
+        return df
 
 def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
     """

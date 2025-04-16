@@ -104,6 +104,7 @@ def ensure_tables_exist():
                     personnel TEXT,
                     role TEXT,
                     clinical_pct FLOAT,
+                    extracted_event_type TEXT, # <-- Add new column
                     raw_data JSONB,
                     batch_id TEXT,
                     processing_status TEXT,
@@ -286,10 +287,11 @@ def save_processed_data_to_db(df, batch_id=None):
                 f"""
                 INSERT INTO {settings.DB_TABLE_PROCESSED_DATA} 
                 (uid, summary, start_time, end_time, duration_hours, personnel, 
-                role, clinical_pct, raw_data, batch_id, processing_status)
+                role, clinical_pct, extracted_event_type, raw_data, batch_id, processing_status)
                 VALUES %s
                 ON CONFLICT (uid) DO UPDATE SET
                     personnel = EXCLUDED.personnel,
+                    extracted_event_type = EXCLUDED.extracted_event_type, # <-- Update on conflict
                     role = EXCLUDED.role,
                     clinical_pct = EXCLUDED.clinical_pct,
                     raw_data = EXCLUDED.raw_data,
@@ -297,7 +299,7 @@ def save_processed_data_to_db(df, batch_id=None):
                     processing_status = EXCLUDED.processing_status,
                     processing_date = CURRENT_TIMESTAMP
                 """,
-                rows_to_insert
+                rows_to_insert # Ensure rows_to_insert includes the event type
             )
             conn.commit()
             
@@ -603,6 +605,7 @@ def save_partial_processed_data(df, batch_id):
             processing_status = row.get('processing_status', 'in_progress')
             
             # Get required fields or use placeholders
+            extracted_event_type = str(row.get('extracted_event_type', 'Unknown')) # <-- Get event type
             summary = str(row.get('summary', '')) if pd.notna(row.get('summary')) else ''
             start_time = row.get('start_time') if pd.notna(row.get('start_time')) else None
             end_time = row.get('end_time') if pd.notna(row.get('end_time')) else None
@@ -618,6 +621,7 @@ def save_partial_processed_data(df, batch_id):
                 personnel,
                 role,
                 clinical_pct,
+                extracted_event_type, # <-- Add event type here
                 row_dict,
                 batch_id,
                 processing_status
@@ -630,10 +634,11 @@ def save_partial_processed_data(df, batch_id):
                 f"""
                 INSERT INTO {settings.DB_TABLE_PROCESSED_DATA} 
                 (uid, summary, start_time, end_time, duration_hours, personnel, 
-                role, clinical_pct, raw_data, batch_id, processing_status)
+                role, clinical_pct, extracted_event_type, raw_data, batch_id, processing_status)
                 VALUES %s
                 ON CONFLICT (uid) DO UPDATE SET
                     personnel = EXCLUDED.personnel,
+                    extracted_event_type = EXCLUDED.extracted_event_type, # <-- Update on conflict
                     role = EXCLUDED.role,
                     clinical_pct = EXCLUDED.clinical_pct,
                     raw_data = EXCLUDED.raw_data,
