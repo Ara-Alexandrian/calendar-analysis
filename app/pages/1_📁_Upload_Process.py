@@ -221,8 +221,8 @@ if st.session_state.get('raw_df') is not None:
                             # Create the dataframe with results
                             llm_processed_df = preprocessed_df.copy()
                             llm_processed_df['extracted_personnel'] = personnel_results
-                            # Use a clearer name for the column holding the *normalized* event type
-                            llm_processed_df['event_type'] = event_type_results
+                            # Use the correct name 'extracted_event_type' for the column holding the *normalized* event type
+                            llm_processed_df['extracted_event_type'] = event_type_results # Renamed column here
                             st.session_state.llm_processed_df = llm_processed_df
 
                             st.success(f"Simplified LLM extraction finished. Errors: {extraction_errors}")
@@ -277,13 +277,12 @@ if st.session_state.get('raw_df') is not None:
 
                     # Display sample of normalized data (ensure normalized_df exists)
                     if normalized_df is not None and not normalized_df.empty:
-                         st.write("Sample of data after normalization:")
-                         # Update display columns to show the normalized 'event_type'
-                         display_cols = [col for col in ['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'event_type', 'assigned_personnel'] if col in normalized_df.columns]
-                         st.dataframe(normalized_df[display_cols].head())
+                        st.write("Sample of data after normalization:")
+                        # Update display columns to show the normalized 'extracted_event_type'
+                        display_cols = [col for col in ['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'extracted_event_type', 'assigned_personnel'] if col in normalized_df.columns]
+                        st.dataframe(normalized_df[display_cols].head())
                     else:
-                         st.warning("No data available to display after normalization step.")
-
+                        st.warning("No data available to display after normalization step.")
 
                     # 4. Explode by Personnel for Analysis
                     st.write("Step 4: Preparing data for analysis (exploding by personnel)...")
