@@ -104,7 +104,7 @@ def ensure_tables_exist():
                     personnel TEXT,
                     role TEXT,
                     clinical_pct FLOAT,
-                    extracted_event_type TEXT, # <-- Add new column
+                    extracted_event_type TEXT,
                     raw_data JSONB,
                     batch_id TEXT,
                     processing_status TEXT,
@@ -252,35 +252,37 @@ def save_processed_data_to_db(df, batch_id=None):
                         row_dict[key] = value
             
             # Get processing status if it exists
-            processing_status = row.get('processing_status', 'assigned')
-            
-            # Convert the dictionary to a JSON string for PostgreSQL
-            import json
-            try:
-                row_json = json.dumps(row_dict)
-            except TypeError as e:
-                logger.error(f"JSON serialization error: {e}")
-                # Fallback: more aggressive conversion to ensure JSON serialization works
-                simple_dict = {}
-                for k, v in row_dict.items():
-                    simple_dict[k] = str(v)
-                row_json = json.dumps(simple_dict)
-            
-            rows_to_insert.append((
-                uid,
-                summary,
-                row['start_time'],
-                row['end_time'],
-                row['duration_hours'],
-                personnel,
-                role,
-                clinical_pct,
-                row_json,  # Store the full row as a JSON string
-                batch_id,
-                processing_status
-            ))
-        
-        # Insert data with ON CONFLICT DO UPDATE to handle duplicates
+                    processing_status = row.get('processing_status', 'assigned')
+                    extracted_event_type = row.get('extracted_event_type', None) # Get event type
+
+                    # Convert the dictionary to a JSON string for PostgreSQL
+                    import json
+                    try:
+                        row_json = json.dumps(row_dict)
+                    except TypeError as e:
+                        logger.error(f"JSON serialization error: {e}")
+                        # Fallback: more aggressive conversion to ensure JSON serialization works
+                        simple_dict = {}
+                        for k, v in row_dict.items():
+                            simple_dict[k] = str(v)
+                        row_json = json.dumps(simple_dict)
+
+                    rows_to_insert.append((
+                        uid,
+                        summary,
+                        row['start_time'],
+                        row['end_time'],
+                        row['duration_hours'],
+                        personnel,
+                        role,
+                        clinical_pct,
+                        extracted_event_type, # Add extracted event type here
+                        row_json,             # Store the full row as a JSON string
+                        batch_id,
+                        processing_status
+                    ))
+
+                # Insert data with ON CONFLICT DO UPDATE to handle duplicates
         with conn.cursor() as cursor:
             execute_values(
                 cursor,

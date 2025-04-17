@@ -20,12 +20,12 @@ from functions import data_processor
 # from functions.llm_extraction.sequential_processor import SequentialProcessor # <-- Bypass this
 from functions.llm_extraction.extractor import _extract_single_physicist_llm # <-- Import directly
 from functions.llm_extraction.ollama_client import get_ollama_client # <-- Correct path for client getter
-from functions.llm_extraction.normalizer import normalize_extracted_personnel
+from functions.llm_extraction.normalizer import normalize_extracted_personnel, normalize_event_type # Re-confirming this import
 from functions.llm_extraction.client import is_llm_ready # Keep this for the readiness check
 # Import the package itself if needed for constants like OLLAMA_AVAILABLE
 import functions.llm_extraction
 from functions import config_manager # Needed to check config status
-from config import settings # For LLM provider check
+from config import settings # For LLM provider check, and EVENT_TYPE_MAPPING
 import functions.db_manager as db_manager
 # No need to reload db_manager usually unless actively developing it
 # importlib.reload(db_manager)
@@ -185,15 +185,17 @@ if st.session_state.get('raw_df') is not None:
                                     # Directly call the core extraction logic (no retry here for simplicity)
                                     # Unpack the tuple result
                                     personnel_result, event_type_result = _extract_single_physicist_llm(summary, llm_client, canonical_names_list)
-                                    personnel_results.append(personnel_result)
-                                    event_type_results.append(event_type_result)
-                                    logger.info(f"Simple Loop - Event {i+1} result: Personnel={personnel_result}, EventType='{event_type_result}'")
+                                    # Normalize the event type *before* appending
+                                    normalized_event_type_str = normalize_event_type(event_type_result, settings.EVENT_TYPE_MAPPING)
+                                    personnel_results.append(personnel_result) # Append personnel list
+                                    event_type_results.append(normalized_event_type_str) # Append normalized type
+                                    logger.info(f"Simple Loop - Event {i+1} result: Personnel={personnel_result}, RawEventType='{event_type_result}', NormalizedEventType='{normalized_event_type_str}'")
                                 except Exception as loop_exc:
                                      logger.error(f"Simple Loop - Error processing event {i+1}: {loop_exc}", exc_info=True)
                                      personnel_results.append(["Unknown_Error"])
-                                     event_type_results.append("Unknown_Error")
+                                     event_type_results.append("Unknown") # Append normalized unknown
                                      extraction_errors += 1
-                                
+
                                 # Update progress
                                 progress_percent = int(((i + 1) / total_summaries) * 100)
                                 st_progress_bar.progress(progress_percent, text=f"Extracting event {i+1}/{total_summaries}...")
@@ -204,7 +206,8 @@ if st.session_state.get('raw_df') is not None:
                             # Create the dataframe with results
                             llm_processed_df = preprocessed_df.copy()
                             llm_processed_df['extracted_personnel'] = personnel_results
-                            llm_processed_df['extracted_event_type'] = event_type_results # Add new column
+                            # Use a clearer name for the column holding the *normalized* event type
+                            llm_processed_df['event_type'] = event_type_results
                             st.session_state.llm_processed_df = llm_processed_df
 
                             st.success(f"Simplified LLM extraction finished. Errors: {extraction_errors}")
@@ -226,8 +229,8 @@ if st.session_state.get('raw_df') is not None:
                         st.session_state.llm_processed_df = temp_df # Use preprocessed df as base
                         llm_processed_df = temp_df # Ensure llm_processed_df is assigned
 
-                    # 3. Normalize Extracted Personnel Names
-                    st.write("Step 3: Normalizing extracted names...")
+                    # 3. Normalize Extracted Personnel Names (Event type already normalized in step 2)
+                    st.write("Step 3: Normalizing extracted personnel names...")
 
                     # Ensure llm_processed_df is a DataFrame before proceeding
                     if not isinstance(llm_processed_df, pd.DataFrame):
@@ -260,8 +263,8 @@ if st.session_state.get('raw_df') is not None:
                     # Display sample of normalized data (ensure normalized_df exists)
                     if normalized_df is not None and not normalized_df.empty:
                          st.write("Sample of data after normalization:")
-                         # Add the new event type column to the display
-                         display_cols = [col for col in ['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'extracted_event_type', 'assigned_personnel'] if col in normalized_df.columns]
+                         # Update display columns to show the normalized 'event_type'
+                         display_cols = [col for col in ['summary', 'start_time', 'duration_hours', 'extracted_personnel', 'event_type', 'assigned_personnel'] if col in normalized_df.columns]
                          st.dataframe(normalized_df[display_cols].head())
                     else:
                          st.warning("No data available to display after normalization step.")

@@ -45,14 +45,97 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
         # Should not happen if called correctly, but safety check
         return ["Unknown_Error"], "Unknown_Error" # Return tuple
         
+    # Define the list of valid event types provided by the user (comprehensive list)
+    valid_event_types = [
+        "Barrigel",
+        "Barrigel OLOL OR",
+        "BR 4D",
+        "BR 4D BH",
+        "BR 4D poss BH",
+        "BR 4D RTP",
+        "BR 4D RTP BH",
+        "BR BH",
+        "BR BH 4D", # (Likely same as BR 4D BH, listed as found)
+        "BR GK SIM",
+        "BR RTP 4D", # (Likely same as BR 4D RTP, listed as found)
+        "BR RTP UNITY",
+        "BR Seed Implant",
+        "BR UNITY CT",
+        "BR UNITY RTP",
+        "BR UNITY RTP 4D",
+        "BR Volume Study",
+        "BR2 SBRT",
+        "BR3 SBRT",
+        "BRG SEED IMPLANT",
+        "CC Chart Rounds", # (Administrative/Meeting)
+        "COV 4D",
+        "COV BH",
+        "COV HDR",
+        "COV HDR T&R",
+        "COV RTP BH",
+        "COV SBRT",
+        "CV1 SBRT",
+        "CV2 SBRT",
+        "Framed GK Tx",
+        "GK MRI",
+        "GK Remote Plan Review", # (Administrative/Planning)
+        "GK SIM",
+        "GK SIM/Tx", # (Combined Event)
+        "GK SBRT Tx", # (Distinct from GK Tx SBRT, listed as found)
+        "GK Tx",
+        "GK Tx SBRT",
+        "GON 4D",
+        "GON BH",
+        "GON Pluvicto",
+        "GON SBRT",
+        "GON Xofigo",
+        "HAM 4D", # Assuming HAM is same as Ham
+        "HAM 4D RTP",
+        "Ham 4D poss BH",
+        "Ham BH",
+        "Ham SBRT",
+        "Hammond SBRT", # (Likely same as Ham SBRT, listed as found)
+        "HOU 4D",
+        "HOU BH",
+        "HOU BH 4D",
+        "HOU SBRT",
+        "Post GK",
+        "Post GK MRI",
+        "Resident's MR-in-Radiotherapy Workshop", # (Administrative/Educational)
+        "Seed Implant", # (Generic)
+        "SpaceOAR Classic",
+        "SpaceOAR Vue",
+        "WH BH",
+        "WH Breast Compression",
+        "WH CT/RTP HDR",
+        "WH HDR",
+        "WH HDR CYL",
+        "WH HDR RTP CYL",
+        "WH HDR T&O",
+        "WH RTP BH",
+        "WH SBRT",
+        # Staffing/Coverage Assignments (Treat as 'Admin' or specific type?) - For now, map to Admin or leave out? Let's add them as distinct for now.
+        "CS UNITY",
+        "CS/SS UNITY",
+        "DN UNITY",
+        "JV UNITY",
+        "JV Unity", # (Variation, likely same as JV UNITY)
+        "SS UNITY",
+        "SS/CS Unity",
+        "SS/DN UNITY"
+    ]
+
     # Construct the prompt
     prompt = f"""
     Your task is to analyze the provided calendar event summary and extract two pieces of information:
     1.  **Personnel Names:** Identify ONLY the canonical physicist names from the provided list that are mentioned or clearly referenced in the summary. Consider variations (initials, last names) but map them back EXACTLY to a name in the list. If multiple names are found, include all. If none are found, use an empty list `[]`.
-    2.  **Event Type:** Identify the primary service or event type described in the summary (e.g., "Post GK", "BR 4D", "HOU BH", "GK Tx", "Consult", "Meeting", "Admin"). Be concise. If the type is unclear, return "Unknown".
+    2.  **Event Type:** Identify the primary service or event type described in the summary. Choose the BEST match ONLY from the 'Valid Event Types' list provided below. If no suitable match is found in the list, return "Unknown".
 
     Known Canonical Physicist Names:
     {json.dumps(canonical_names, indent=2)}
+
+    Valid Event Types (Choose ONLY from this list):
+    {json.dumps(valid_event_types, indent=2)}
 
     Event Summary:
     "{summary}"
@@ -162,7 +245,7 @@ def extract_personnel_with_llm(summary: str, llm_client, canonical_names: list[s
     Returns a tuple: (personnel_list, event_type_string)
     """
     if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
-        return ["Unknown"]  # Return list for consistency
+        return ["Unknown"], "Unknown" # Return tuple for consistency
 
     try:
         result = _extract_single_physicist_llm(summary, llm_client, canonical_names)
@@ -278,8 +361,9 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
                 # Get at least one future to validate parallel processing works
                 first_future = next(completed_futures)
                 idx = future_to_index[first_future]
-                result = first_future.result()
-                results[idx] = result
+                personnel_list, event_type = first_future.result() # Unpack tuple
+                personnel_results[idx] = personnel_list
+                event_type_results[idx] = event_type
                 completed_count += 1
                 term_progress.update(1)  # Update the terminal progress bar
                 
@@ -319,11 +403,13 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
 
                 index = future_to_index[future]
                 try:
-                    result = future.result()  # Get the list of names or error string
-                    results[index] = result
+                    personnel_list, event_type = future.result() # Unpack tuple
+                    personnel_results[index] = personnel_list
+                    event_type_results[index] = event_type
                 except Exception as exc:
                     logger.error(f"Summary index {index} ('{summaries[index][:50]}...') generated an exception: {exc}")
-                    results[index] = ["Unknown_Error"]  # Mark as error, ensure it's a list
+                    personnel_results[index] = ["Unknown_Error"] # Mark both as error
+                    event_type_results[index] = "Unknown_Error"
 
                 # Update progress bar
                 completed_count += 1
@@ -331,22 +417,30 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
                 progress_percent = int((completed_count / total_summaries) * 100)
                 progress_bar.progress(progress_percent, text=f"Processing event {completed_count}/{total_summaries}...")
 
-            # Check if all results were processed
-            missing_results = [i for i, r in enumerate(results) if r is None]
-            if missing_results:
-                logger.warning(f"{len(missing_results)} events were not processed in parallel mode. Processing them sequentially.")
+            # Check if all results were processed correctly
+            missing_personnel = [i for i, r in enumerate(personnel_results) if r is None]
+            missing_event_type = [i for i, r in enumerate(event_type_results) if r is None]
+            missing_indices = sorted(list(set(missing_personnel) | set(missing_event_type))) # Combine unique indices
+
+            if missing_indices:
+                logger.warning(f"{len(missing_indices)} events were not processed correctly in parallel mode. Processing them sequentially.")
                 # Process missing results sequentially
-                for i in missing_results:
+                for i in missing_indices:
                     try:
-                        results[i] = extract_personnel_with_llm(summaries[i], llm_client, canonical_names)
-                        # Update progress bar
-                        completed_count += 1
+                        personnel_list, event_type = extract_personnel_with_llm(summaries[i], llm_client, canonical_names) # Unpack tuple
+                        personnel_results[i] = personnel_list
+                        event_type_results[i] = event_type
+                        # Update progress bar (ensure completed_count reflects actual completions)
+                        # Note: completed_count might be slightly off if only one part failed, but okay for progress indication
+                        if i not in future_to_index: # Only increment if it wasn't processed at all before
+                             completed_count += 1
                         term_progress.update(1)  # Update the terminal progress bar
                         progress_percent = int((completed_count / total_summaries) * 100)
                         progress_bar.progress(progress_percent, text=f"Processing event {completed_count}/{total_summaries}...")
                     except Exception as e:
                         logger.error(f"Sequential fallback failed for index {i}: {e}")
-                        results[i] = ["Unknown_Error"]
+                        personnel_results[i] = ["Unknown_Error"] # Mark both as error
+                        event_type_results[i] = "Unknown_Error"
 
         progress_bar.progress(100, text="LLM Extraction Complete!")
         term_progress.close()  # Close the terminal progress bar
@@ -370,11 +464,14 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
             return df_copy
 
     # Ensure all results are set
-    for i in range(len(results)):
-        if results[i] is None:
-            results[i] = ["Unknown_Error"]
-            
-    df_copy['extracted_personnel'] = results
+    for i in range(len(summaries)):
+        if personnel_results[i] is None:
+            personnel_results[i] = ["Unknown_Error"]
+        if event_type_results[i] is None:
+            event_type_results[i] = "Unknown_Error"
+
+    df_copy['extracted_personnel'] = personnel_results
+    df_copy['extracted_event_type'] = event_type_results
     return df_copy
 
 import os
@@ -693,9 +790,10 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                         logger.info(f"Refreshing LLM client after processing {i} items...")
                         thread_llm_client = get_llm_client()
 
-                    # Extract personnel from the summary
-                    result = extract_personnel_with_llm(summary, thread_llm_client, thread_canonical_names)
-                    df_copy.loc[i, 'extracted_personnel'] = result
+                    # Extract personnel and event type from the summary
+                    personnel_list, event_type = extract_personnel_with_llm(summary, thread_llm_client, thread_canonical_names)
+                    df_copy.loc[i, 'extracted_personnel'] = personnel_list
+                    df_copy.loc[i, 'extracted_event_type'] = event_type # Assign event type
                     df_copy.loc[i, 'processing_status'] = 'extracted'
 
                     # Save progress every 10 items
@@ -720,6 +818,7 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                 except Exception as e:
                     logger.error(f"Error processing summary {i+1}/{len(summaries)}: {e}")
                     df_copy.loc[i, 'extracted_personnel'] = ["Unknown_Error"]
+                    df_copy.loc[i, 'extracted_event_type'] = "Unknown_Error" # Assign error state
                     error_count += 1
 
                     # Refresh the client after multiple errors

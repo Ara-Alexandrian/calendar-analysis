@@ -9,6 +9,41 @@ from functions import config_manager
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
+def normalize_event_type(event_type_str: str | None, mapping: dict) -> str:
+    """
+    Normalizes a raw event type string using a predefined mapping.
+
+    Args:
+        event_type_str: The raw event type string extracted by the LLM, or None.
+        mapping: A dictionary mapping lowercase raw strings to standardized names.
+
+    Returns:
+        The standardized event type name, or the original string if no mapping is found
+        or if the input is invalid. Returns "Unknown" if input is None or empty after stripping.
+    """
+    if not isinstance(event_type_str, str) or not event_type_str:
+        logger.debug(f"Invalid or empty event_type_str received: {event_type_str}. Returning 'Unknown'.")
+        return "Unknown"
+
+    cleaned_str = event_type_str.strip().lower()
+    if not cleaned_str:
+        logger.debug(f"Event type string became empty after cleaning: '{event_type_str}'. Returning 'Unknown'.")
+        return "Unknown"
+
+    normalized_value = mapping.get(cleaned_str)
+
+    if normalized_value:
+        logger.debug(f"Normalized '{event_type_str}' (cleaned: '{cleaned_str}') to '{normalized_value}'")
+        return normalized_value
+    else:
+        # Return the original (but stripped) string if no mapping found,
+        # potentially capitalizing it for consistency if desired, but let's keep it simple for now.
+        logger.warning(f"No mapping found for event type '{cleaned_str}' (original: '{event_type_str}'). Returning cleaned version.")
+        # Consider returning event_type_str.strip().title() or similar if capitalization is desired for unmapped types
+        return cleaned_str
+
+
 def normalize_extracted_personnel(df) -> pd.DataFrame:
     """
     Normalizes the 'extracted_personnel' column (output from LLM)

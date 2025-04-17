@@ -202,6 +202,13 @@ st.sidebar.header("Analysis Filters")
 # Get filter options from data and config
 all_personnel = sorted(df_analysis['personnel'].unique())
 all_roles = sorted(list(set(config_manager.get_role(p) for p in all_personnel)))
+# Add event type options, handling potential missing column or NaNs
+if 'event_type' in df_analysis.columns:
+    all_event_types = sorted(df_analysis['event_type'].dropna().unique())
+else:
+    all_event_types = []
+    logger.warning("Analysis page: 'event_type' column not found in data. Event type filter disabled.")
+
 min_date = df_analysis['start_time'].min().date() if not df_analysis.empty else datetime.date.today()
 max_date = df_analysis['start_time'].max().date() if not df_analysis.empty else datetime.date.today()
 
@@ -252,6 +259,16 @@ selected_roles = st.sidebar.multiselect(
     key="role_filter"
 )
 
+# Event Type Filter
+default_event_types = [] # Default to all
+selected_event_types = st.sidebar.multiselect(
+    "Select Event Types (leave blank for all)",
+    options=all_event_types,
+    default=default_event_types,
+    key="event_type_filter",
+    disabled=not all_event_types # Disable if no event types found
+)
+
 # Apply Filters Button
 apply_filters = st.sidebar.button("Apply Filters", key="apply_filters_btn")
 
@@ -268,7 +285,8 @@ try:
         start_date=selected_start_date,
         end_date=selected_end_date,
         selected_personnel=selected_personnel if selected_personnel else None, # Pass None if empty
-        selected_roles=selected_roles if selected_roles else None
+        selected_roles=selected_roles if selected_roles else None,
+        selected_event_types=selected_event_types if selected_event_types else None # Pass selected event types
     )
     logger.info(f"Filters applied. {len(df_filtered)} rows remaining.")
 except Exception as e:
@@ -285,10 +303,13 @@ if df_filtered.empty:
 else:
     st.info(f"Displaying results for **{len(df_filtered)}** event assignments within the selected filters.")
 
+    # Add option to group by event type
+    group_by_event_type = st.checkbox("Group workload summary by Event Type", key="group_by_event_type_cb")
+
     # Calculate Workload Summary
     try:
-        workload_summary_df = ac.calculate_workload_summary(df_filtered)
-        logger.info("Workload summary calculated.")
+        workload_summary_df = ac.calculate_workload_summary(df_filtered, group_by_event_type=group_by_event_type)
+        logger.info(f"Workload summary calculated (grouped by event type: {group_by_event_type}).")
     except Exception as e:
         st.error(f"Error calculating workload summary: {e}")
         logger.error(f"Workload calculation error: {e}", exc_info=True)
@@ -318,7 +339,8 @@ else:
         try:
             # Create a new weekly distribution chart if available
             weekly_fig = viz.plot_daily_hourly_heatmap(df_filtered)
-            st.plotly_chart(weekly_fig, use_container_width=True)
+            # Add a unique key
+            st.plotly_chart(weekly_fig, use_container_width=True, key="weekly_distribution_heatmap")
         except Exception as e:
             st.error(f"Could not generate weekly distribution: {e}")
             logger.error(f"Weekly distribution error: {e}", exc_info=True)
@@ -336,12 +358,14 @@ else:
             
             # Show workload table
             st.subheader("Detailed Personnel Workload")
-            st.dataframe(workload_summary_df.style.format({
+            # Define formatting, including potential event_type column
+            format_dict = {
                 'clinical_pct': '{:.1%}',
                 'total_duration_hours': '{:.1f}',
                 'avg_duration_hours': '{:.1f}'
-            }))
-            
+            }
+            st.dataframe(workload_summary_df.style.format(format_dict))
+
             # Download Button for summary
             csv_summary = workload_summary_df.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -368,9 +392,10 @@ else:
         
         # Add additional time distribution charts if available
         try:
-            # Day of week distribution
+            # Day of week distribution (using the same function, needs a different key)
             dow_fig = viz.plot_daily_hourly_heatmap(df_filtered)
-            st.plotly_chart(dow_fig, use_container_width=True)
+            # Add a unique key
+            st.plotly_chart(dow_fig, use_container_width=True, key="dow_distribution_heatmap")
         except Exception as e:
             st.error(f"Could not generate time distribution charts: {e}")
             logger.error(f"Time distribution error: {e}", exc_info=True)
