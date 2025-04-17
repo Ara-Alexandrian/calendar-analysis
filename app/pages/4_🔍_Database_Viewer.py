@@ -369,8 +369,9 @@ else:
                         WHERE batch_id = %s
                         GROUP BY processing_status
                     """
-                    status_df = execute_custom_query(status_query, params=[selected_batch])
-                    
+                    # Pass params as a tuple for psycopg2 compatibility
+                    status_df = execute_custom_query(status_query, params=(selected_batch,))
+
                     if not status_df.empty:
                         st.subheader("Detailed Status")
                         st.dataframe(status_df)

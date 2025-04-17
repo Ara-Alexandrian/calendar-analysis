@@ -5,7 +5,8 @@ Creates baseline configuration in PostgreSQL upon startup.
 import logging
 import json
 from config import settings
-from . import db_manager
+# from . import db_manager # Old import causing error
+from functions import db as db_manager # Import the new db package
 
 logger = logging.getLogger(__name__)
 
