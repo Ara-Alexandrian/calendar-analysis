@@ -9,7 +9,42 @@ from functions import config_manager
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def normalize_extracted_personnel(df: pd.DataFrame) -> pd.DataFrame:
+
+def normalize_event_type(event_type_str: str | None, mapping: dict) -> str:
+    """
+    Normalizes a raw event type string using a predefined mapping.
+
+    Args:
+        event_type_str: The raw event type string extracted by the LLM, or None.
+        mapping: A dictionary mapping lowercase raw strings to standardized names.
+
+    Returns:
+        The standardized event type name, or the original string if no mapping is found
+        or if the input is invalid. Returns "Unknown" if input is None or empty after stripping.
+    """
+    if not isinstance(event_type_str, str) or not event_type_str:
+        logger.debug(f"Invalid or empty event_type_str received: {event_type_str}. Returning 'Unknown'.")
+        return "Unknown"
+
+    cleaned_str = event_type_str.strip().lower()
+    if not cleaned_str:
+        logger.debug(f"Event type string became empty after cleaning: '{event_type_str}'. Returning 'Unknown'.")
+        return "Unknown"
+
+    normalized_value = mapping.get(cleaned_str)
+
+    if normalized_value:
+        logger.debug(f"Normalized '{event_type_str}' (cleaned: '{cleaned_str}') to '{normalized_value}'")
+        return normalized_value
+    else:
+        # Return the original (but stripped) string if no mapping found,
+        # potentially capitalizing it for consistency if desired, but let's keep it simple for now.
+        logger.warning(f"No mapping found for event type '{cleaned_str}' (original: '{event_type_str}'). Returning cleaned version.")
+        # Consider returning event_type_str.strip().title() or similar if capitalization is desired for unmapped types
+        return cleaned_str
+
+
+def normalize_extracted_personnel(df) -> pd.DataFrame:
     """
     Normalizes the 'extracted_personnel' column (output from LLM)
     using the variation map to create the 'assigned_personnel' column.
@@ -23,52 +58,93 @@ def normalize_extracted_personnel(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with a new 'assigned_personnel' column containing normalized names
     """
+    # Handle the case when a list is passed instead of a DataFrame
+    if not isinstance(df, pd.DataFrame):
+        logger.error(f"Expected DataFrame but received {type(df)}. Converting to DataFrame.")
+        try:
+            # Try to convert list to DataFrame if possible
+            if isinstance(df, list):
+                # Create a basic DataFrame with the list as 'extracted_personnel' column
+                df = pd.DataFrame({'extracted_personnel': df})
+            else:
+                # For other unexpected types, create an empty DataFrame with placeholder
+                logger.error(f"Could not convert {type(df)} to DataFrame. Creating empty DataFrame.")
+                df = pd.DataFrame({'extracted_personnel': [['Unknown']]})
+        except Exception as e:
+            logger.error(f"Error converting to DataFrame: {e}")
+            df = pd.DataFrame({'extracted_personnel': [['Unknown']]})
+            
     if 'extracted_personnel' not in df.columns:
         logger.warning("Column 'extracted_personnel' not found for normalization. Skipping.")
         # Add placeholder if analysis expects it
         df['assigned_personnel'] = [['Unknown']] * len(df)
         return df
 
+    # Get canonical names and variations map from configuration
+    canonical_names = config_manager.get_canonical_names()
     variation_map = config_manager.get_variation_map()
     df_copy = df.copy()
 
     def normalize(extracted_item):
         """Normalize a single extracted_personnel item (list or string)."""
-        if isinstance(extracted_item, list):
-            normalized_list = set()  # Use set to handle duplicates from LLM
+        # Initialize empty list for normalized names
+        normalized_list = []
+        
+        # Handle special string cases like "Unknown" or "Unknown_Error"
+        if isinstance(extracted_item, str):
+            logger.warning(f"Expected list but got string: {extracted_item}")
+            if extracted_item == "Unknown" or extracted_item == "Unknown_Error":
+                return ["Unknown"]
+            else:
+                # Try to treat single string as a name
+                if extracted_item in canonical_names:
+                    return [extracted_item]
+                # Check if it's in variation map
+                elif extracted_item in variation_map:
+                    return [variation_map[extracted_item]]
+                else:
+                    return ["Unknown"]
+                    
+        # Normal case: list of extracted names
+        elif isinstance(extracted_item, list):
+            normalized_set = set()  # Use set to handle duplicates from LLM
             for item in extracted_item:
-                 # LLM should return canonical names directly now, but map just in case
-                 # Or handle variations if prompt asked for variations
-                 # Assuming LLM returns names matching canonical list:
-                 if item in config_manager.get_canonical_names():
-                     normalized_list.add(item)
-                 # Add mapping logic here if LLM returns variations instead
-                 # elif item.lower() in variation_map:
-                 #     normalized_list.add(variation_map[item.lower()])
-                 elif item != "Unknown":  # Log unexpected items not in canonical list
-                      logger.debug(f"LLM returned name '{item}' not in current canonical list. Ignoring.")
-
+                if not isinstance(item, str):
+                    continue  # Skip non-string items
+                    
+                # Check if name is already canonical
+                if item in canonical_names:
+                    normalized_set.add(item)
+                    continue
+                    
+                # Check if it's a known variation
+                if item in variation_map:
+                    normalized_set.add(variation_map[item])
+                    continue
+                    
+                # No match found, leave as is if not "Unknown"
+                if item != "Unknown_Error":
+                    logger.info(f"Name '{item}' not found in canonical names or variations")
+            
+            # Convert set back to list
+            normalized_list = list(normalized_set)
+            
+            # If we didn't find any names, return "Unknown"
             if not normalized_list:
-                return ["Unknown"]  # Return list containing 'Unknown'
-            return sorted(list(normalized_list))  # Return sorted list of unique canonical names
-
-        elif isinstance(extracted_item, str) and extracted_item.startswith("Unknown"):
-            # Keep "Unknown" or "Unknown_Error" as is, but ensure it's in a list
-            return [extracted_item]
+                return ["Unknown"]
+            return normalized_list
+            
+        # Fallback for unexpected types
         else:
-            # Handle unexpected types, treat as Unknown
-            logger.warning(f"Unexpected data type in 'extracted_personnel': {type(extracted_item)}. Treating as Unknown.")
-            return ["Unknown"]  # Return list containing 'Unknown'
+            logger.warning(f"Unexpected type in extracted_personnel: {type(extracted_item)}")
+            return ["Unknown"]
 
-    df_copy['assigned_personnel'] = df_copy['extracted_personnel'].apply(normalize)
-
-    # Log value counts for debugging
-    logger.info("Counts of assigned personnel lists (first element shown for brevity if list):")
+    # Apply normalization to each row
     try:
-        # Show counts of the list representation or the string if not list
-        counts = df_copy['assigned_personnel'].apply(lambda x: str(x) if isinstance(x, list) else x).value_counts()
-        logger.info("\n" + counts.to_string(max_rows=50))
+        df_copy['assigned_personnel'] = df_copy['extracted_personnel'].apply(normalize)
+        logger.info(f"Normalized {len(df_copy)} personnel entries")
     except Exception as e:
-        logger.warning(f"Could not generate value counts for assigned_personnel: {e}")
-
+        logger.error(f"Error during normalization process: {e}")
+        df_copy['assigned_personnel'] = [['Unknown']] * len(df_copy)
+    
     return df_copy

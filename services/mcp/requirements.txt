@@ -1,0 +1,9 @@
+# MCP Server Requirements
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.4.2
+python-dotenv>=1.0.0
+httpx>=0.27.0
+# Add torch and transformers if using local HF models
+# torch>=2.0.0
+# transformers>=4.30.0

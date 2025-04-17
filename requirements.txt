@@ -11,3 +11,9 @@ ollama>=0.1.5  # Required for LLM extraction of personnel names
 
 # Optional utilities
 tqdm>=4.66.0  # Optional for better progress bars in CLI mode
+
+# Database connector (if using PostgreSQL)
+psycopg2-binary>=2.9.0
+
+# Database ORM and utilities
+sqlalchemy>=1.4.0

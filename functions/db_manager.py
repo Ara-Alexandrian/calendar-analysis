@@ -2,6 +2,7 @@
 import logging
 import pandas as pd
 import psycopg2
+import json
 from psycopg2 import sql
 from psycopg2.extras import execute_values
 from config import settings
@@ -12,11 +13,45 @@ def get_db_connection():
     """
     Establishes and returns a connection to the PostgreSQL database.
     Returns None if DB_ENABLED is False or if connection fails.
+    
+    Creates the database if it doesn't exist.
     """
     if not settings.DB_ENABLED:
         logger.info("Database persistence is disabled in settings.")
         return None
     
+    # First try to connect to default database to check if our target database exists
+    try:
+        # Connect to 'postgres' default database to check if our database exists
+        default_conn = psycopg2.connect(
+            host=settings.DB_HOST,
+            port=settings.DB_PORT,
+            database='postgres',  # Default database that should exist
+            user=settings.DB_USER,
+            password=settings.DB_PASSWORD
+        )
+        default_conn.autocommit = True  # Required for creating database
+        
+        # Check if our database exists
+        cursor = default_conn.cursor()
+        cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (settings.DB_NAME.lower(),))
+        db_exists = cursor.fetchone()
+        
+        if not db_exists:
+            logger.warning(f"Database '{settings.DB_NAME}' does not exist. Creating it now...")
+            try:
+                # Create the database if it doesn't exist
+                cursor.execute(f"CREATE DATABASE {settings.DB_NAME}")
+                logger.info(f"Database '{settings.DB_NAME}' created successfully.")
+            except Exception as create_e:
+                logger.error(f"Failed to create database: {create_e}")
+        
+        cursor.close()
+        default_conn.close()
+    except Exception as check_e:
+        logger.error(f"Error checking/creating database: {check_e}")
+    
+    # Now try to connect to our target database
     try:
         # Parse special characters in password properly by URL encoding
         import urllib.parse
@@ -41,7 +76,7 @@ def get_db_connection():
             logger.info(f"Successfully connected to PostgreSQL using direct parameters")
             return conn
         except Exception as e2:
-            logger.error(f"Failed to connect to PostgreSQL with both methods: {e}, {e2}")
+            logger.error(f"Failed to connect to PostgreSQL database '{settings.DB_NAME}': {e2}")
             
             # Fall back to in-memory processing when database connection fails
             logger.warning("Falling back to in-memory processing due to database connection failure")
@@ -58,8 +93,8 @@ def ensure_tables_exist():
     try:
         with conn.cursor() as cursor:
             # Create processed events table if it doesn't exist
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS {} (
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {settings.DB_TABLE_PROCESSED_DATA} (
                     id SERIAL PRIMARY KEY,
                     uid TEXT UNIQUE,
                     summary TEXT,
@@ -69,17 +104,18 @@ def ensure_tables_exist():
                     personnel TEXT,
                     role TEXT,
                     clinical_pct FLOAT,
+                    extracted_event_type TEXT,
                     raw_data JSONB,
                     batch_id TEXT,
                     processing_status TEXT,
                     calendar_file_id INTEGER,
                     processing_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """.format(sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)))
+            """)
             
             # Create personnel config table if it doesn't exist
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS {} (
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {settings.DB_TABLE_PERSONNEL} (
                     id SERIAL PRIMARY KEY,
                     canonical_name TEXT UNIQUE,
                     role TEXT,
@@ -87,11 +123,11 @@ def ensure_tables_exist():
                     variations JSONB,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """.format(sql.Identifier(settings.DB_TABLE_PERSONNEL)))
+            """)
             
-            # Create calendar files table to store raw JSON files - now keeps only the most recent file
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS calendar_files (
+            # Create calendar files table to store raw JSON files - without the problematic constraint
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {settings.DB_TABLE_CALENDAR_FILES} (
                     id SERIAL PRIMARY KEY,
                     filename TEXT,
                     file_content JSONB,
@@ -99,20 +135,43 @@ def ensure_tables_exist():
                     upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     processed BOOLEAN DEFAULT FALSE,
                     batch_id TEXT,
-                    is_current BOOLEAN DEFAULT TRUE,
-                    CONSTRAINT unique_current_file CHECK (
-                        (is_current = FALSE) OR 
-                        (is_current = TRUE AND (SELECT COUNT(*) FROM calendar_files WHERE is_current = TRUE) <= 1)
-                    )
+                    is_current BOOLEAN DEFAULT FALSE
                 )
             """)
             
             # Add an index on the uid field for faster lookups
-            cursor.execute("""
+            cursor.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_processed_events_uid 
-                ON {} (uid)
-            """.format(sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)))
+                ON {settings.DB_TABLE_PROCESSED_DATA} (uid)
+            """)
             
+            # Create a function to enforce the constraint that only one file can be current
+            cursor.execute("""
+                CREATE OR REPLACE FUNCTION enforce_single_current_file()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF NEW.is_current = TRUE THEN
+                        UPDATE calendar_files SET is_current = FALSE WHERE id != NEW.id;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+            """)
+            
+            # Try to create the trigger if it doesn't exist
+            try:
+                cursor.execute("""
+                    CREATE TRIGGER ensure_single_current_file
+                    BEFORE INSERT OR UPDATE ON calendar_files
+                    FOR EACH ROW
+                    WHEN (NEW.is_current = TRUE)
+                    EXECUTE FUNCTION enforce_single_current_file();
+                """)
+            except Exception as e:
+                # If the trigger already exists, this will fail but we can continue
+                logger.info(f"Trigger creation note: {e}")
+                pass
+                
             conn.commit()
             logger.info("Database tables created or already exist")
             return True
@@ -163,45 +222,78 @@ def save_processed_data_to_db(df, batch_id=None):
             personnel = row['personnel']
             role = config_manager.get_role(personnel)
             clinical_pct = config_manager.get_clinical_pct(personnel)
-            
-            # Convert to Python native types and handle None values
+              # Convert to Python native types and handle None values
             summary = str(row['summary']) if pd.notna(row['summary']) else None
             uid = str(row['uid']) if pd.notna(row['uid']) else None
             
+            # Make sure personnel is a string, not a list or dict
+            if isinstance(personnel, (list, dict)):
+                personnel = str(personnel)
+            
             # Convert the row to a dict for JSON storage (excluding large objects)
-            row_dict = row.to_dict()
-            for key in ['start_time', 'end_time']:  # Remove datetime objects
-                if key in row_dict:
-                    row_dict[key] = str(row_dict[key])
+            row_dict = {}
+            for key, value in row.to_dict().items():
+                # Handle various types that need conversion
+                if pd.isna(value):
+                    row_dict[key] = None
+                elif isinstance(value, (pd.Timestamp, pd.DatetimeTZDtype)):
+                    row_dict[key] = str(value)
+                elif isinstance(value, dict):
+                    # Keep dictionaries as they'll be JSON serialized later
+                    row_dict[key] = value
+                elif isinstance(value, list):
+                    # Ensure lists don't contain non-serializable objects
+                    row_dict[key] = [str(item) if not isinstance(item, (str, int, float, bool, type(None))) else item for item in value]
+                else:
+                    # Convert any other non-serializable objects to strings
+                    if not isinstance(value, (str, int, float, bool, type(None))):
+                        row_dict[key] = str(value)
+                    else:
+                        row_dict[key] = value
             
             # Get processing status if it exists
-            processing_status = row.get('processing_status', 'assigned')
-            
-            rows_to_insert.append((
-                uid,
-                summary,
-                row['start_time'],
-                row['end_time'],
-                row['duration_hours'],
-                personnel,
-                role,
-                clinical_pct,
-                row_dict,  # Store the full row as JSON
-                batch_id,
-                processing_status
-            ))
-        
-        # Insert data with ON CONFLICT DO UPDATE to handle duplicates
+                    processing_status = row.get('processing_status', 'assigned')
+                    extracted_event_type = row.get('extracted_event_type', None) # Get event type
+
+                    # Convert the dictionary to a JSON string for PostgreSQL
+                    import json
+                    try:
+                        row_json = json.dumps(row_dict)
+                    except TypeError as e:
+                        logger.error(f"JSON serialization error: {e}")
+                        # Fallback: more aggressive conversion to ensure JSON serialization works
+                        simple_dict = {}
+                        for k, v in row_dict.items():
+                            simple_dict[k] = str(v)
+                        row_json = json.dumps(simple_dict)
+
+                    rows_to_insert.append((
+                        uid,
+                        summary,
+                        row['start_time'],
+                        row['end_time'],
+                        row['duration_hours'],
+                        personnel,
+                        role,
+                        clinical_pct,
+                        extracted_event_type, # Add extracted event type here
+                        row_json,             # Store the full row as a JSON string
+                        batch_id,
+                        processing_status
+                    ))
+
+                # Insert data with ON CONFLICT DO UPDATE to handle duplicates
         with conn.cursor() as cursor:
             execute_values(
                 cursor,
                 f"""
                 INSERT INTO {settings.DB_TABLE_PROCESSED_DATA} 
                 (uid, summary, start_time, end_time, duration_hours, personnel, 
-                role, clinical_pct, raw_data, batch_id, processing_status)
+                role, clinical_pct, extracted_event_type, raw_data, batch_id, processing_status)
                 VALUES %s
                 ON CONFLICT (uid) DO UPDATE SET
                     personnel = EXCLUDED.personnel,
+                    extracted_event_type = EXCLUDED.extracted_event_type, # <-- Update on conflict
                     role = EXCLUDED.role,
                     clinical_pct = EXCLUDED.clinical_pct,
                     raw_data = EXCLUDED.raw_data,
@@ -209,7 +301,7 @@ def save_processed_data_to_db(df, batch_id=None):
                     processing_status = EXCLUDED.processing_status,
                     processing_date = CURRENT_TIMESTAMP
                 """,
-                rows_to_insert
+                rows_to_insert # Ensure rows_to_insert includes the event type
             )
             conn.commit()
             
@@ -229,6 +321,65 @@ def save_processed_data_to_db(df, batch_id=None):
     finally:
         if conn:
             conn.close()
+
+def save_processed_data_in_batches(df, batch_id=None, batch_size=100):
+    """
+    Saves processed data to the database in smaller batches to prevent data loss
+    if processing is interrupted.
+    
+    Args:
+        df: DataFrame containing processed event data
+        batch_id: Optional batch ID to associate with this data
+        batch_size: Number of records to save in each database transaction
+        
+    Returns:
+        tuple: (bool, int) - Success status and count of saved records
+    """
+    if df is None or df.empty:
+        logger.warning("No data to save to database.")
+        return False, 0
+    
+    total_rows = len(df)
+    saved_rows = 0
+    failed_batches = []
+    
+    try:
+        # Process and save data in batches
+        for start_idx in range(0, total_rows, batch_size):
+            end_idx = min(start_idx + batch_size, total_rows)
+            batch_df = df.iloc[start_idx:end_idx].copy()
+            
+            try:
+                # Save this batch
+                batch_success = save_processed_data_to_db(batch_df, batch_id)
+                
+                if batch_success:
+                    saved_rows += len(batch_df)
+                    logger.info(f"Saved batch {start_idx//batch_size + 1}: {saved_rows}/{total_rows} records")
+                else:
+                    error_msg = f"Failed to save batch starting at record {start_idx}"
+                    logger.error(error_msg)
+                    failed_batches.append((start_idx, end_idx, error_msg))
+            except Exception as e:
+                error_msg = f"Exception while saving batch starting at record {start_idx}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                failed_batches.append((start_idx, end_idx, error_msg))
+                # Continue with next batch despite errors
+                continue
+        
+        success = saved_rows > 0
+        if success:
+            logger.info(f"Successfully saved {saved_rows}/{total_rows} records in batches")
+            if failed_batches:
+                logger.warning(f"There were {len(failed_batches)} failed batches. Check logs for details.")
+        else:
+            logger.error("Failed to save any records to database")
+            
+        return success, saved_rows
+    
+    except Exception as e:
+        logger.error(f"Error in batch saving process: {str(e)}", exc_info=True)
+        return False, saved_rows
 
 def save_personnel_config_to_db(config_dict):
     """
@@ -251,15 +402,17 @@ def save_personnel_config_to_db(config_dict):
     try:
         # Create the tables if they don't exist
         ensure_tables_exist()
-        
-        # Prepare data for insertion
+          # Prepare data for insertion
         rows_to_insert = []
         for name, details in config_dict.items():
+            # Convert variations list to JSON string for PostgreSQL JSONB format
+            variations = json.dumps(details.get('variations', []))
+            
             rows_to_insert.append((
                 name,
                 details.get('role', ''),
                 details.get('clinical_pct', 0.0),
-                details.get('variations', [])
+                variations  # Now as a JSON string instead of array
             ))
         
         with conn.cursor() as cursor:
@@ -422,69 +575,84 @@ def save_partial_processed_data(df, batch_id):
         from functions import config_manager
         
         rows_to_insert = []
+        
+        # Check if 'extracted_personnel' exists in the DataFrame
+        has_extracted = 'extracted_personnel' in df.columns
+        has_uid = 'uid' in df.columns
+        
         for _, row in df.iterrows():
-            personnel = row.get('personnel', 'Unknown')
-            # For partial processing, the personnel might be in extracted_personnel
-            if 'personnel' not in row and 'extracted_personnel' in row:
-                # Handle both string and list formats from LLM extraction
-                extracted = row['extracted_personnel']
+            # Get personnel from extracted_personnel if it exists, otherwise default
+            personnel = "Unknown"
+            if has_extracted:
+                extracted = row.get('extracted_personnel')
                 if isinstance(extracted, list) and len(extracted) > 0:
-                    personnel = extracted[0]
+                    personnel = extracted[0]  # Take the first one for partial data
                 elif isinstance(extracted, str):
                     personnel = extracted
             
+            # Get role and clinical percentage based on the personnel
             role = config_manager.get_role(personnel)
             clinical_pct = config_manager.get_clinical_pct(personnel)
             
-            summary = str(row['summary']) if pd.notna(row.get('summary')) else None
-            uid = str(row['uid']) if pd.notna(row.get('uid')) else None
+            # Generate a row ID if none exists
+            uid = row.get('uid') if has_uid else f"{batch_id}_{_}"
             
             # Convert the row to a dict for JSON storage
             row_dict = row.to_dict()
             for key in ['start_time', 'end_time']:
-                if key in row_dict and row_dict[key] is not None:
+                if key in row_dict and pd.notna(row_dict[key]):
                     row_dict[key] = str(row_dict[key])
             
-            # Determine processing status
-            status = 'processing'
-            if 'extracted_personnel' in row and row['extracted_personnel'] != []:
-                status = 'extracted'
-            if 'assigned_personnel' in row:
-                status = 'assigned'
+            # Get or set processing status
+            processing_status = row.get('processing_status', 'in_progress')
             
+            # Get required fields or use placeholders
+            extracted_event_type = str(row.get('extracted_event_type', 'Unknown')) # <-- Get event type
+            summary = str(row.get('summary', '')) if pd.notna(row.get('summary')) else ''
+            start_time = row.get('start_time') if pd.notna(row.get('start_time')) else None
+            end_time = row.get('end_time') if pd.notna(row.get('end_time')) else None
+            duration_hours = row.get('duration_hours', 0) if pd.notna(row.get('duration_hours')) else 0
+            
+            # Append to rows to insert
             rows_to_insert.append((
                 uid,
                 summary,
-                row.get('start_time'),
-                row.get('end_time'),
-                row.get('duration_hours'),
+                start_time,
+                end_time,
+                duration_hours,
                 personnel,
                 role,
                 clinical_pct,
+                extracted_event_type, # <-- Add event type here
                 row_dict,
                 batch_id,
-                status
+                processing_status
             ))
         
-        # Insert or update data
+        # Now actually insert the data
         with conn.cursor() as cursor:
             execute_values(
                 cursor,
                 f"""
                 INSERT INTO {settings.DB_TABLE_PROCESSED_DATA} 
-                (uid, summary, start_time, end_time, duration_hours, personnel, role, 
-                clinical_pct, raw_data, batch_id, processing_status)
+                (uid, summary, start_time, end_time, duration_hours, personnel, 
+                role, clinical_pct, extracted_event_type, raw_data, batch_id, processing_status)
                 VALUES %s
                 ON CONFLICT (uid) DO UPDATE SET
                     personnel = EXCLUDED.personnel,
+                    extracted_event_type = EXCLUDED.extracted_event_type, # <-- Update on conflict
+                    role = EXCLUDED.role,
+                    clinical_pct = EXCLUDED.clinical_pct,
                     raw_data = EXCLUDED.raw_data,
-                    processing_status = EXCLUDED.processing_status
+                    batch_id = EXCLUDED.batch_id,
+                    processing_status = EXCLUDED.processing_status,
+                    processing_date = CURRENT_TIMESTAMP
                 """,
                 rows_to_insert
             )
             conn.commit()
-            
-        logger.info(f"Successfully saved {len(rows_to_insert)} partial rows for batch {batch_id}")
+        
+        logger.info(f"Successfully saved {len(rows_to_insert)} partial rows for batch {batch_id} to database")
         return True
         
     except Exception as e:
@@ -620,8 +788,8 @@ def save_calendar_file_to_db(filename, file_content):
         
         # Check if this exact file has been processed before
         with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT batch_id, processed FROM calendar_files
+            cursor.execute(f"""
+                SELECT batch_id, processed FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE file_hash = %s
                 ORDER BY upload_date DESC
                 LIMIT 1
@@ -648,14 +816,14 @@ def save_calendar_file_to_db(filename, file_content):
         
         # Before inserting, mark all existing calendar files as not current
         with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE calendar_files
+            cursor.execute(f"""
+                UPDATE {settings.DB_TABLE_CALENDAR_FILES}
                 SET is_current = FALSE
             """)
             
             # Now insert the new file as the current one
-            cursor.execute("""
-                INSERT INTO calendar_files
+            cursor.execute(f"""
+                INSERT INTO {settings.DB_TABLE_CALENDAR_FILES}
                 (filename, file_content, file_hash, batch_id, processed, is_current)
                 VALUES (%s, %s, %s, %s, FALSE, TRUE)
                 RETURNING id
@@ -692,8 +860,8 @@ def mark_calendar_file_as_processed(batch_id):
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE calendar_files
+            cursor.execute(f"""
+                UPDATE {settings.DB_TABLE_CALENDAR_FILES}
                 SET processed = TRUE
                 WHERE batch_id = %s
             """, (batch_id,))
@@ -727,9 +895,9 @@ def get_calendar_file_by_batch_id(batch_id):
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT filename, file_content, processed 
-                FROM calendar_files
+                FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE batch_id = %s
                 LIMIT 1
             """, (batch_id,))
@@ -764,9 +932,9 @@ def get_pending_calendar_files():
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT batch_id, filename, file_content
-                FROM calendar_files
+                FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE processed = FALSE
                 ORDER BY upload_date ASC
             """)
@@ -801,9 +969,9 @@ def get_current_calendar_file():
     
     try:
         with conn.cursor() as cursor:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT id, batch_id, filename, file_content
-                FROM calendar_files
+                FROM {settings.DB_TABLE_CALENDAR_FILES}
                 WHERE is_current = TRUE
                 LIMIT 1
             """)
@@ -855,3 +1023,119 @@ def count_unique_events_in_database():
     finally:
         if conn:
             conn.close()
+
+def get_processed_events_by_batch(batch_id):
+    """
+    Retrieves processed events from the database for a specific batch.
+    
+    Args:
+        batch_id: The batch ID to filter by
+        
+    Returns:
+        pandas.DataFrame: DataFrame containing the retrieved events, or empty DataFrame if retrieval fails.
+    """
+    conn = get_db_connection()
+    if not conn:
+        logger.warning(f"Could not get database connection to retrieve events for batch {batch_id}")
+        return pd.DataFrame()
+    
+    try:
+        query = f"SELECT * FROM {settings.DB_TABLE_PROCESSED_DATA} WHERE batch_id = %s"
+        
+        # Execute query and fetch results into DataFrame
+        df = pd.read_sql_query(query, conn, params=[batch_id])
+        
+        if not df.empty:
+            logger.info(f"Retrieved {len(df)} events from database for batch {batch_id}")
+        else:
+            logger.warning(f"No events found in database for batch {batch_id}")
+            
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error retrieving events from database for batch {batch_id}: {e}")
+        return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
+
+def clear_database_tables():
+    """
+    Clears all data from the main data tables (processed_events).
+    Does NOT delete the tables themselves.
+    
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    if not settings.DB_ENABLED:
+        logger.warning("Database persistence is disabled. Cannot clear tables.")
+        return False
+        
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Failed to connect to database for clearing tables.")
+        return False
+        
+    try:
+        with conn.cursor() as cursor:
+            # Clear the processed events table
+            logger.warning(f"Clearing table: {settings.DB_TABLE_PROCESSED_DATA}")
+            cursor.execute(sql.SQL("TRUNCATE TABLE {} RESTART IDENTITY CASCADE").format(
+                sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)
+            ))
+            
+            # Optionally, clear or reset other related tables if needed
+            # For now, just clearing the main processed data table.
+            # We might want to reset the 'processed' flag on calendar files later.
+            # cursor.execute(sql.SQL("UPDATE {} SET processed = FALSE, is_current = FALSE").format(
+            #     sql.Identifier(settings.DB_TABLE_CALENDAR_FILES)
+            # ))
+            
+            conn.commit()
+            logger.info("Successfully cleared database tables.")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error clearing database tables: {e}")
+        if conn:
+            conn.rollback()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def get_db_connection_with_retry(max_retries=3, retry_delay=2):
+    """
+    Attempts to connect to the database with retry logic.
+    
+    Args:
+        max_retries: Maximum number of connection attempts
+        retry_delay: Seconds to wait between retries
+        
+    Returns:
+        Connection object or None if all attempts fail
+    """
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            conn = get_db_connection()
+            if conn:
+                # Test the connection with a simple query
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    cursor.fetchone()
+                logger.info(f"Successfully connected to database after {retry_count + 1} attempts")
+                return conn
+        except Exception as e:
+            last_error = e
+            retry_count += 1
+            logger.warning(f"Database connection attempt {retry_count} failed: {e}")
+            if retry_count < max_retries:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                import time
+                time.sleep(retry_delay)
+    
+    logger.error(f"Failed to connect to database after {max_retries} attempts: {last_error}")
+    return None

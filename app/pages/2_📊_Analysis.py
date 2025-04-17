@@ -16,7 +16,7 @@ from functions import analysis_calculations as ac
 from functions import visualization_plotly as viz
 from functions import config_manager # To get personnel list, roles
 from functions import db_manager # For real-time database queries
-from functions import llm_extractor # For checking background processing status
+from functions import llm_extraction # For checking background processing status
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,29 @@ def load_latest_data():
     """Loads the most up-to-date data from either session state or database"""
     data_source = st.session_state.get('data_source', 'session')
     
-    # Check for background processing data first
+    # Log what's in session state for debugging
+    logger.info(f"Session state keys: {list(st.session_state.keys())}")
+    
+    # Check for our newly added analysis_data structure first
+    if 'analysis_data' in st.session_state and st.session_state.analysis_data:
+        try:
+            # Get the most recent batch if available
+            if 'most_recent_batch' in st.session_state and st.session_state.most_recent_batch in st.session_state.analysis_data:
+                batch_key = st.session_state.most_recent_batch
+                df = st.session_state.analysis_data[batch_key]['df']
+                logger.info(f"Loaded {len(df)} records from analysis_data[{batch_key}]")
+                return df
+            # Otherwise use the latest batch by timestamp
+            elif st.session_state.analysis_data:
+                latest_batch = max(st.session_state.analysis_data.keys(), 
+                                  key=lambda k: st.session_state.analysis_data[k].get('timestamp', 0))
+                df = st.session_state.analysis_data[latest_batch]['df']
+                logger.info(f"Loaded {len(df)} records from latest analysis_data batch: {latest_batch}")
+                return df
+        except Exception as e:
+            logger.error(f"Error loading from analysis_data: {e}")
+    
+    # Check for background processing data
     if st.session_state.get('llm_background_processing', False):
         batch_id = st.session_state.get('current_batch_id')
         
@@ -77,10 +99,24 @@ def load_latest_data():
             logger.error(f"Error loading data from database: {e}")
             st.error("Could not load data from database. Using session data instead.")
     
-    # Fall back to session state
-    if 'analysis_ready_df' in st.session_state and st.session_state.analysis_ready_df is not None:
+    # Fall back to standard session state locations
+    if 'analysis_ready_df' in st.session_state and st.session_state.analysis_ready_df is not None and not st.session_state.analysis_ready_df.empty:
+        logger.info(f"Loaded {len(st.session_state.analysis_ready_df)} records from analysis_ready_df")
         return st.session_state.analysis_ready_df
     
+    if 'normalized_df' in st.session_state and st.session_state.normalized_df is not None:
+        # Need to explode the data since it's not analysis-ready yet
+        try:
+            from functions import data_processor
+            df = data_processor.explode_by_personnel(st.session_state.normalized_df, personnel_col='assigned_personnel')
+            if not df.empty:
+                logger.info(f"Loaded and exploded {len(df)} records from normalized_df")
+                return df
+        except Exception as e:
+            logger.error(f"Error exploding normalized_df: {e}")
+    
+    # If still no data, return None
+    logger.warning("Analysis page: load_latest_data() returned None. No data found in any storage location.")
     return None
 
 # Sidebar controls for real-time updates
@@ -131,13 +167,32 @@ if st.session_state.auto_refresh:
         st.session_state.last_refresh_time = time.time()
         st.rerun()
 
+# --- Additional debug info in UI for troubleshooting ---
+with st.expander("Debug Information", expanded=False):
+    st.write("Session State Keys:", list(st.session_state.keys()))
+    if 'analysis_data' in st.session_state:
+        st.write("Analysis Data Batches:", list(st.session_state.analysis_data.keys()))
+    if 'most_recent_batch' in st.session_state:
+        st.write("Most Recent Batch ID:", st.session_state.most_recent_batch)
+    if 'data_processed' in st.session_state:
+        st.write("Data Processed Flag:", st.session_state.data_processed)
+
 # --- Load data ---
 df_analysis = load_latest_data()
 
 # --- Check if data is ready ---
-if df_analysis is None or df_analysis.empty:
+if df_analysis is None:
     st.warning("No processed data available for analysis. Please upload and process data on the 'Upload & Process' page first.", icon="⚠️")
-    st.stop() # Stop execution of this page
+    st.info("After processing data, the results will appear here automatically.")
+    
+    # Add a helpful button to navigate to the Upload page
+    if st.button("Go to Upload & Process Page"):
+        st.switch_page("pages/1_📁_Upload_Process.py")
+    
+    st.stop()  # Stop execution of this page
+elif df_analysis.empty:
+    st.warning("The processed data is empty. Please check your calendar file and processing settings.", icon="⚠️")
+    st.stop()  # Stop execution of this page
 
 logger.info(f"Analysis page loaded with {len(df_analysis)} rows.")
 
@@ -147,6 +202,18 @@ st.sidebar.header("Analysis Filters")
 # Get filter options from data and config
 all_personnel = sorted(df_analysis['personnel'].unique())
 all_roles = sorted(list(set(config_manager.get_role(p) for p in all_personnel)))
+# Add event type options, handling potential missing column or NaNs
+# Use 'extracted_event_type' which is the column populated by LLM
+event_type_col = 'extracted_event_type' 
+if event_type_col in df_analysis.columns:
+    # Ensure we handle potential None or NaN values gracefully before sorting
+    unique_types = df_analysis[event_type_col].dropna().unique()
+    # Convert all to string to avoid comparison errors if mixed types exist
+    all_event_types = sorted([str(t) for t in unique_types])
+else:
+    all_event_types = []
+    logger.warning(f"Analysis page: '{event_type_col}' column not found in data. Event type filter disabled.")
+
 min_date = df_analysis['start_time'].min().date() if not df_analysis.empty else datetime.date.today()
 max_date = df_analysis['start_time'].max().date() if not df_analysis.empty else datetime.date.today()
 
@@ -197,6 +264,16 @@ selected_roles = st.sidebar.multiselect(
     key="role_filter"
 )
 
+# Event Type Filter
+default_event_types = [] # Default to all
+selected_event_types = st.sidebar.multiselect(
+    "Select Event Types (leave blank for all)",
+    options=all_event_types,
+    default=default_event_types,
+    key="event_type_filter",
+    disabled=not all_event_types # Disable if no event types found
+)
+
 # Apply Filters Button
 apply_filters = st.sidebar.button("Apply Filters", key="apply_filters_btn")
 
@@ -213,7 +290,8 @@ try:
         start_date=selected_start_date,
         end_date=selected_end_date,
         selected_personnel=selected_personnel if selected_personnel else None, # Pass None if empty
-        selected_roles=selected_roles if selected_roles else None
+        selected_roles=selected_roles if selected_roles else None,
+        selected_event_types=selected_event_types if selected_event_types else None # Pass selected event types
     )
     logger.info(f"Filters applied. {len(df_filtered)} rows remaining.")
 except Exception as e:
@@ -225,74 +303,26 @@ except Exception as e:
 st.markdown("---")
 st.header("Analysis Results")
 
-# Display background processing status if active
-if st.session_state.get('llm_background_processing', False):
-    st.info("📊 **Background LLM processing is active.** The data will refresh automatically as more events are processed.")
-    
-    # Get the current batch ID
-    batch_id = st.session_state.get('current_batch_id')
-    
-    if batch_id:
-        if settings.DB_ENABLED:
-            # Get processing status from database
-            status = db_manager.get_latest_processing_status(batch_id)
-            
-            # Create a progress bar for background processing
-            if status['status'] == 'in_progress':
-                st.progress(status['pct_complete']/100, text=f"Processing: {status['pct_complete']:.1f}% complete")
-                st.caption(f"Processing details: {status['extracted']} extracted, {status['processing']} remaining")
-                
-                # Force refresh every 10 seconds during active processing
-                st.session_state.auto_refresh = True
-                st.session_state.refresh_interval = min(st.session_state.refresh_interval, 10)
-                
-            elif status['status'] == 'complete':
-                st.success("✅ Background processing complete! All data is now available for analysis.")
-                
-                # When complete, refresh one more time to ensure we have the latest data
-                if st.session_state.get('data_source') != 'database':
-                    st.session_state.data_source = 'database'
-                    st.rerun()
-        else:
-            # Check session state for background processing status when DB is disabled
-            if hasattr(st.session_state, 'background_processed_data') and batch_id in st.session_state.background_processed_data:
-                background_data = st.session_state.background_processed_data[batch_id]
-                
-                if background_data.get('status') == 'complete':
-                    st.success("✅ Background processing complete! All data is now available for analysis.")
-                else:
-                    # Calculate progress if available
-                    if 'progress' in background_data:
-                        progress = background_data['progress']
-                        st.progress(progress, text=f"Processing: {progress*100:.1f}% complete")
-                    
-                    if 'message' in background_data:
-                        st.caption(background_data['message'])
-                    
-                    # Force refresh every 10 seconds during active processing
-                    st.session_state.auto_refresh = True
-                    st.session_state.refresh_interval = min(st.session_state.refresh_interval, 10)
-            else:
-                st.warning("Processing status not available. Auto-refresh enabled to check progress.")
-                st.session_state.auto_refresh = True
-                st.session_state.refresh_interval = 10
-
 if df_filtered.empty:
     st.warning("No data matches the selected filters.")
 else:
     st.info(f"Displaying results for **{len(df_filtered)}** event assignments within the selected filters.")
 
+    # Add option to group by event type
+    group_by_event_type = st.checkbox("Group workload summary by Event Type", key="group_by_event_type_cb")
+
     # Calculate Workload Summary
     try:
-        workload_summary_df = ac.calculate_workload_summary(df_filtered)
-        logger.info("Workload summary calculated.")
+        workload_summary_df = ac.calculate_workload_summary(df_filtered, group_by_event_type=group_by_event_type)
+        logger.info(f"Workload summary calculated (grouped by event type: {group_by_event_type}).")
     except Exception as e:
         st.error(f"Error calculating workload summary: {e}")
         logger.error(f"Workload calculation error: {e}", exc_info=True)
         workload_summary_df = pd.DataFrame() # Ensure it's an empty df
 
     # Create tabs for better organization
-    tab1, tab2, tab3, tab4 = st.tabs(["Summary", "Personnel Analysis", "Time Distribution", "Raw Data"])
+    tab_titles = ["Summary", "Personnel Analysis", "Personnel Comparison", "Time Distribution", "Raw Data"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
     with tab1:
         st.subheader("Quick Insights")
@@ -315,7 +345,8 @@ else:
         try:
             # Create a new weekly distribution chart if available
             weekly_fig = viz.plot_daily_hourly_heatmap(df_filtered)
-            st.plotly_chart(weekly_fig, use_container_width=True)
+            # Add a unique key
+            st.plotly_chart(weekly_fig, use_container_width=True, key="weekly_distribution_heatmap")
         except Exception as e:
             st.error(f"Could not generate weekly distribution: {e}")
             logger.error(f"Weekly distribution error: {e}", exc_info=True)
@@ -333,12 +364,14 @@ else:
             
             # Show workload table
             st.subheader("Detailed Personnel Workload")
-            st.dataframe(workload_summary_df.style.format({
+            # Define formatting, including potential event_type column
+            format_dict = {
                 'clinical_pct': '{:.1%}',
                 'total_duration_hours': '{:.1f}',
                 'avg_duration_hours': '{:.1f}'
-            }))
-            
+            }
+            st.dataframe(workload_summary_df.style.format(format_dict))
+
             # Download Button for summary
             csv_summary = workload_summary_df.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -351,7 +384,17 @@ else:
         else:
             st.info("No workload summary data generated for the selected filters (perhaps only 'Unknown' assignments remain).")
 
-    with tab3:
+    with tab3: # This is the new "Personnel Comparison" tab
+        st.subheader("Personnel Effort Comparison by Event Type")
+        try:
+            # Generate and display the grouped bar chart
+            effort_fig = viz.plot_personnel_effort_by_event_type(df_filtered)
+            st.plotly_chart(effort_fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Could not generate personnel effort comparison chart: {e}")
+            logger.error(f"Personnel effort chart error: {e}", exc_info=True)
+
+    with tab4: # This was previously tab3
         st.subheader("Time Distribution Analysis")
         
         # New personnel heatmap visualization
@@ -365,14 +408,15 @@ else:
         
         # Add additional time distribution charts if available
         try:
-            # Day of week distribution
+            # Day of week distribution (using the same function, needs a different key)
             dow_fig = viz.plot_daily_hourly_heatmap(df_filtered)
-            st.plotly_chart(dow_fig, use_container_width=True)
+            # Add a unique key
+            st.plotly_chart(dow_fig, use_container_width=True, key="dow_distribution_heatmap")
         except Exception as e:
             st.error(f"Could not generate time distribution charts: {e}")
             logger.error(f"Time distribution error: {e}", exc_info=True)
 
-    with tab4:
+    with tab5: # This was previously tab4
         st.subheader("Raw Data")
         st.dataframe(df_filtered)
         

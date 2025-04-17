@@ -5,6 +5,7 @@ import logging
 import psycopg2
 import json
 from config import settings
+from sqlalchemy import create_engine, text
 
 # Ensure project root is in path
 import sys, os
@@ -92,6 +93,17 @@ if not conn:
     
     st.stop()
 
+# Create SQLAlchemy engine for pandas operations
+try:
+    import urllib.parse
+    encoded_password = urllib.parse.quote_plus(settings.DB_PASSWORD)
+    engine = create_engine(f"postgresql://{settings.DB_USER}:{encoded_password}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+    logger.info("SQLAlchemy engine created successfully")
+except Exception as e:
+    st.error(f"Failed to create SQLAlchemy engine: {e}")
+    st.warning("Falling back to direct database connection (may show pandas warnings)")
+    engine = None
+
 # Function to get list of tables in the database
 def get_all_tables():
     try:
@@ -138,7 +150,17 @@ def count_table_rows(table_name):
 # Function to query data from a table with custom SQL
 def execute_custom_query(query, params=None):
     try:
-        df = pd.read_sql_query(query, conn, params=params)
+        if engine is not None:
+            # Use SQLAlchemy engine if available
+            if params:
+                # For parameterized queries with SQLAlchemy
+                query_obj = text(query)
+                df = pd.read_sql_query(query_obj, engine, params=params)
+            else:
+                df = pd.read_sql_query(query, engine)
+        else:
+            # Fall back to direct connection if engine creation failed
+            df = pd.read_sql_query(query, conn, params=params)
         return df
     except Exception as e:
         st.error(f"Error executing query: {e}")
@@ -152,7 +174,12 @@ def get_table_data(table_name, limit=100, offset=0, where_clause=""):
             query += f" WHERE {where_clause}"
         query += f" LIMIT {limit} OFFSET {offset}"
         
-        df = pd.read_sql_query(query, conn)
+        if engine is not None:
+            # Use SQLAlchemy engine if available
+            df = pd.read_sql_query(query, engine)
+        else:
+            # Fall back to direct connection
+            df = pd.read_sql_query(query, conn)
         return df
     except Exception as e:
         st.error(f"Error fetching data: {e}")
@@ -321,6 +348,7 @@ else:
                                          batch_stats['batch_id'].tolist())
                 
                 if selected_batch:
+                    # Get processing status by batch ID
                     status = db_manager.get_latest_processing_status(selected_batch)
                     
                     # Display status information
@@ -367,6 +395,40 @@ else:
                 st.info("No calendar files found in the database")
         except Exception as e:
             st.error(f"Error fetching calendar files: {e}")
+            
+        # Admin Actions Section
+        st.markdown("---")
+        st.markdown("### Admin Actions")
+        
+        # Initialize session state for confirmation
+        if 'confirm_clear_db' not in st.session_state:
+            st.session_state.confirm_clear_db = False
+            
+        clear_db_button = st.button("Clear Processed Event Data", type="secondary")
+        
+        if clear_db_button:
+            st.session_state.confirm_clear_db = True
+            
+        if st.session_state.confirm_clear_db:
+            st.warning("⚠️ **Are you sure you want to clear all processed event data?** This action cannot be undone.")
+            
+            col_confirm, col_cancel = st.columns(2)
+            with col_confirm:
+                if st.button("Yes, Clear Database", type="primary"):
+                    st.session_state.confirm_clear_db = False # Reset confirmation state
+                    
+                    # Call the function to clear the database
+                    success = db_manager.clear_database_tables()
+                    
+                    if success:
+                        st.success("Database tables cleared successfully!")
+                        st.rerun() # Rerun the page to reflect changes
+                    else:
+                        st.error("Failed to clear database tables. Check logs for details.")
+            with col_cancel:
+                if st.button("Cancel"):
+                    st.session_state.confirm_clear_db = False
+                    st.rerun() # Rerun to hide confirmation
 
 # Close connection when done
 if conn:

@@ -334,3 +334,55 @@ def save_processed_data_for_export(df, file_path=settings.PROCESSED_EXPORT_PATH)
 
 # Loading is less relevant for internal flow now, might be for importing exported data
 # def load_processed_data_from_export(file_path=settings.PROCESSED_EXPORT_PATH): ...
+
+def process_calendar_data(calendar_data):
+    """
+    Process calendar data from raw format into a structured DataFrame.
+    
+    Parameters:
+    -----------
+    calendar_data : list
+        List of dictionaries containing calendar events
+        
+    Returns:
+    --------
+    pd.DataFrame
+        Processed DataFrame with datetime objects and calculated durations
+    """
+    if not calendar_data:
+        return pd.DataFrame()
+    
+    # Create empty DataFrame
+    processed_data = []
+    
+    for event in calendar_data:
+        # Extract basic info
+        event_data = {
+            'subject': event.get('subject', 'No Subject'),
+            'start_time': parse_datetime(event.get('start', {}).get('dateTime')),
+            'end_time': parse_datetime(event.get('end', {}).get('dateTime')),
+        }
+        
+        # Calculate duration in hours
+        if pd.notna(event_data['start_time']) and pd.notna(event_data['end_time']):
+            event_data['duration_hours'] = (event_data['end_time'] - event_data['start_time']).total_seconds() / 3600
+        else:
+            event_data['duration_hours'] = 0
+            
+        # Handle attendees
+        attendees = event.get('attendees', [])
+        if attendees:
+            attendee_names = [attendee.get('name') for attendee in attendees if attendee.get('name')]
+            event_data['personnel'] = attendee_names if attendee_names else ['Unknown']
+        else:
+            event_data['personnel'] = ['Unknown']
+            
+        # Add date column for filtering
+        event_data['date'] = event_data['start_time'].date() if pd.notna(event_data['start_time']) else None
+        
+        processed_data.append(event_data)
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(processed_data)
+    
+    return df

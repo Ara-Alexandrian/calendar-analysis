@@ -1,8 +1,0 @@
-# requirements.txt
-pandas
-matplotlib
-seaborn
-ollama
-tqdm
-streamlit # Add Streamlit
-plotly    # Add Plotly for interactive charts
