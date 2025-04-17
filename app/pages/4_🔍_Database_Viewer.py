@@ -395,6 +395,40 @@ else:
                 st.info("No calendar files found in the database")
         except Exception as e:
             st.error(f"Error fetching calendar files: {e}")
+            
+        # Admin Actions Section
+        st.markdown("---")
+        st.markdown("### Admin Actions")
+        
+        # Initialize session state for confirmation
+        if 'confirm_clear_db' not in st.session_state:
+            st.session_state.confirm_clear_db = False
+            
+        clear_db_button = st.button("Clear Processed Event Data", type="secondary")
+        
+        if clear_db_button:
+            st.session_state.confirm_clear_db = True
+            
+        if st.session_state.confirm_clear_db:
+            st.warning("⚠️ **Are you sure you want to clear all processed event data?** This action cannot be undone.")
+            
+            col_confirm, col_cancel = st.columns(2)
+            with col_confirm:
+                if st.button("Yes, Clear Database", type="primary"):
+                    st.session_state.confirm_clear_db = False # Reset confirmation state
+                    
+                    # Call the function to clear the database
+                    success = db_manager.clear_database_tables()
+                    
+                    if success:
+                        st.success("Database tables cleared successfully!")
+                        st.rerun() # Rerun the page to reflect changes
+                    else:
+                        st.error("Failed to clear database tables. Check logs for details.")
+            with col_cancel:
+                if st.button("Cancel"):
+                    st.session_state.confirm_clear_db = False
+                    st.rerun() # Rerun to hide confirmation
 
 # Close connection when done
 if conn:

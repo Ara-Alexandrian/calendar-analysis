@@ -45,23 +45,15 @@ if uploaded_file is not None:
     st.session_state.uploaded_filename = uploaded_file.name
     # Read content - important to do it here before the file buffer might close
     try:
-        file_content = uploaded_file.getvalue()
+        file_content_bytes = uploaded_file.getvalue() # Read as bytes
+        st.session_state.uploaded_file_content = file_content_bytes # Store bytes in session
 
-        # Save the raw file to database if enabled
-        # from functions import db_manager # Already imported above
-        if settings.DB_ENABLED:
-            success, batch_id, is_duplicate = db_manager.save_calendar_file_to_db(
-                filename=uploaded_file.name,
-                file_content=file_content
-            )
+        # Calculate hash here for later use
+        import hashlib
+        st.session_state.uploaded_file_hash = hashlib.sha256(file_content_bytes).hexdigest()
 
-            if success:
-                st.session_state.current_batch_id = batch_id
-                if is_duplicate:
-                    st.info(f"This file has been uploaded before. Existing data will be used to avoid duplicates.")
-
-        # Load raw data using the modified function
-        raw_df = data_processor.load_raw_calendar_data(file_content, uploaded_file.name)
+        # Load raw data using the modified function (pass bytes)
+        raw_df = data_processor.load_raw_calendar_data(file_content_bytes, uploaded_file.name)
 
         if raw_df is not None:
             st.session_state.raw_df = raw_df
@@ -146,6 +138,32 @@ if st.session_state.get('raw_df') is not None:
             start_time = time.time()
             with st.spinner("Processing data... This may take a while for the initial steps."):
                 try:
+                    # 0. Save Calendar File Info to DB (if enabled) - Moved here
+                    if settings.DB_ENABLED:
+                        st.write("Registering uploaded file in database...")
+                        try:
+                            success, batch_id, is_duplicate = db_manager.save_calendar_file_to_db(
+                                filename=st.session_state.uploaded_filename,
+                                file_content=st.session_state.uploaded_file_content # Use bytes from session
+                            )
+                            if success:
+                                st.session_state.current_batch_id = batch_id # Store the batch_id from DB save
+                                if is_duplicate:
+                                    st.info(f"File '{st.session_state.uploaded_filename}' has been processed before (Batch ID: {batch_id}). Re-processing.")
+                                else:
+                                    st.info(f"File '{st.session_state.uploaded_filename}' registered with Batch ID: {batch_id}")
+                            else:
+                                st.error("Failed to register file in database. Processing will continue but might lack DB tracking.")
+                                # Assign a temporary batch ID if DB save fails
+                                import uuid
+                                st.session_state.current_batch_id = f"temp_batch_{uuid.uuid4().hex[:8]}"
+                        except Exception as db_save_e:
+                            st.error(f"Error registering file in database: {db_save_e}")
+                            logger.error(f"Error in save_calendar_file_to_db: {db_save_e}", exc_info=True)
+                            # Assign a temporary batch ID if DB save fails
+                            import uuid
+                            st.session_state.current_batch_id = f"temp_batch_{uuid.uuid4().hex[:8]}"
+
                     # 1. Preprocess Data
                     st.write("Step 1: Preprocessing data (dates, duration)...")
                     preprocessed_df = data_processor.preprocess_data(st.session_state.raw_df)
@@ -156,10 +174,7 @@ if st.session_state.get('raw_df') is not None:
                     st.write(f"Preprocessing done: {len(preprocessed_df)} events remaining.")
                     logger.info(f"Preprocessing complete: {len(preprocessed_df)} events.")
 
-                    # Generate a unique batch ID for this processing job
-                    import uuid
-                    batch_id = f"batch_{uuid.uuid4().hex[:8]}_{int(time.time())}"
-                    st.session_state.current_batch_id = batch_id
+                    # Batch ID is now set earlier during DB save or fallback
 
                     # 2. LLM Extraction
                     if llm_enabled and llm_ok:

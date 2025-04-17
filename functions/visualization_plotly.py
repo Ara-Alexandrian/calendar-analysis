@@ -116,7 +116,62 @@ def plot_daily_hourly_heatmap(df_filtered: pd.DataFrame):
          xaxis_title="Hour of Day (0-23)",
          yaxis_title="Day of Week"
      )
+    
+    return fig
 
+def plot_personnel_effort_by_event_type(df_filtered: pd.DataFrame):
+    """
+    Generates a grouped bar chart showing total duration per event type 
+    for each selected personnel.
+    
+    Args:
+        df_filtered (pandas.DataFrame): The filtered DataFrame containing 
+                                        personnel, extracted_event_type, and duration_hours.
+                                        
+    Returns:
+        plotly.graph_objects.Figure: Grouped bar chart visualization.
+    """
+    event_type_col = 'extracted_event_type'
+    required_cols = ['personnel', event_type_col, 'duration_hours']
+    
+    if df_filtered is None or df_filtered.empty:
+        logger.warning("Input DataFrame is empty. Skipping personnel effort plot.")
+        return go.Figure()
+        
+    # Check for required columns
+    missing_cols = [col for col in required_cols if col not in df_filtered.columns]
+    if missing_cols:
+        logger.error(f"Cannot generate personnel effort plot: Missing required columns: {missing_cols}")
+        return go.Figure()
+        
+    # Group by personnel and event type, summing duration
+    effort_data = df_filtered.groupby(['personnel', event_type_col], observed=True)['duration_hours'].sum().reset_index()
+    
+    if effort_data.empty:
+        logger.warning("No data after grouping for personnel effort plot.")
+        return go.Figure()
+        
+    # Create the grouped bar chart
+    fig = px.bar(effort_data,
+                 x='personnel',
+                 y='duration_hours',
+                 color=event_type_col,
+                 barmode='group', # Key for grouped bars
+                 title="Personnel Effort by Event Type",
+                 labels={'personnel': 'Personnel',
+                         'duration_hours': 'Total Duration (Hours)',
+                         event_type_col: 'Event Type'},
+                 text='duration_hours' # Display value on bar
+                )
+                
+    fig.update_layout(
+        xaxis_title="Personnel",
+        yaxis_title="Total Duration (Hours)",
+        legend_title="Event Type",
+        height=max(500, effort_data['personnel'].nunique() * 50) # Adjust height
+    )
+    fig.update_traces(texttemplate='%{text:.1f}h', textposition='outside') # Format text labels
+    
     return fig
 
 def create_personnel_heatmap(df):

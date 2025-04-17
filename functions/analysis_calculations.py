@@ -50,12 +50,15 @@ def filter_data(df: pd.DataFrame, start_date=None, end_date=None, selected_perso
             # Optionally drop the temporary 'role' column if not needed later
             # df_filtered = df_filtered.drop(columns=['role'])
 
-    # 4. Filter by Event Type
+    # 4. Filter by Event Type (using the correct column name)
+    event_type_col = 'extracted_event_type'
     if selected_event_types: # If list is not empty
-        if 'event_type' in df_filtered.columns:
-            df_filtered = df_filtered[df_filtered['event_type'].isin(selected_event_types)]
+        if event_type_col in df_filtered.columns:
+            # Ensure comparison is robust (e.g., convert both to string if necessary)
+            # Assuming selected_event_types are strings from the multiselect
+            df_filtered = df_filtered[df_filtered[event_type_col].astype(str).isin(selected_event_types)]
         else:
-            logger.warning("Filtering by event type skipped: 'event_type' column missing.")
+            logger.warning(f"Filtering by event type skipped: '{event_type_col}' column missing.")
 
 
     logger.info(f"Data filtered: {len(df_filtered)} rows remaining.")
@@ -65,17 +68,18 @@ def filter_data(df: pd.DataFrame, start_date=None, end_date=None, selected_perso
 def calculate_workload_summary(df_filtered: pd.DataFrame, group_by_event_type: bool = False):
     """
     Calculates workload metrics (events, duration) grouped by personnel,
-    optionally also grouping by event_type.
+    optionally also grouping by extracted_event_type.
     """
+    event_type_col = 'extracted_event_type' # Use the correct column name
     required_cols = ['personnel', 'duration_hours', 'uid'] # uid needed for event count
     if group_by_event_type:
-        required_cols.append('event_type')
+        required_cols.append(event_type_col)
 
     if df_filtered is None or df_filtered.empty:
         logger.warning("Input DataFrame is empty. Returning empty summary.")
         cols = ['personnel', 'role', 'clinical_pct', 'total_events', 'total_duration_hours', 'avg_duration_hours']
         if group_by_event_type:
-            cols.insert(1, 'event_type') # Add event_type after personnel
+            cols.insert(1, event_type_col) # Add event_type after personnel
         return pd.DataFrame(columns=cols)
 
     # Check for required columns
@@ -84,13 +88,13 @@ def calculate_workload_summary(df_filtered: pd.DataFrame, group_by_event_type: b
          logger.error(f"Cannot calculate workload: Missing required columns: {missing_cols}")
          cols = ['personnel', 'role', 'clinical_pct', 'total_events', 'total_duration_hours', 'avg_duration_hours']
          if group_by_event_type:
-             cols.insert(1, 'event_type')
+             cols.insert(1, event_type_col)
          return pd.DataFrame(columns=cols)
 
     # Define grouping columns
     grouping_cols = ['personnel']
     if group_by_event_type:
-        grouping_cols.append('event_type')
+        grouping_cols.append(event_type_col)
 
     # Group and aggregate
     workload = df_filtered.groupby(grouping_cols, observed=True).agg( # observed=True is good practice
@@ -114,7 +118,7 @@ def calculate_workload_summary(df_filtered: pd.DataFrame, group_by_event_type: b
     # Reorder columns for clarity
     final_cols = ['personnel']
     if group_by_event_type:
-        final_cols.append('event_type')
+        final_cols.append(event_type_col)
     final_cols.extend(['role', 'clinical_pct', 'total_events', 'total_duration_hours', 'avg_duration_hours'])
     workload = workload[final_cols]
 
@@ -122,7 +126,7 @@ def calculate_workload_summary(df_filtered: pd.DataFrame, group_by_event_type: b
     sort_cols = ['personnel']
     ascending_list = [True] # Start with ascending for personnel
     if group_by_event_type:
-        sort_cols.append('event_type')
+        sort_cols.append(event_type_col)
         ascending_list.append(True) # Ascending for event type
     sort_cols.append('total_duration_hours')
     ascending_list.append(False) # Descending for duration

@@ -203,11 +203,16 @@ st.sidebar.header("Analysis Filters")
 all_personnel = sorted(df_analysis['personnel'].unique())
 all_roles = sorted(list(set(config_manager.get_role(p) for p in all_personnel)))
 # Add event type options, handling potential missing column or NaNs
-if 'event_type' in df_analysis.columns:
-    all_event_types = sorted(df_analysis['event_type'].dropna().unique())
+# Use 'extracted_event_type' which is the column populated by LLM
+event_type_col = 'extracted_event_type' 
+if event_type_col in df_analysis.columns:
+    # Ensure we handle potential None or NaN values gracefully before sorting
+    unique_types = df_analysis[event_type_col].dropna().unique()
+    # Convert all to string to avoid comparison errors if mixed types exist
+    all_event_types = sorted([str(t) for t in unique_types])
 else:
     all_event_types = []
-    logger.warning("Analysis page: 'event_type' column not found in data. Event type filter disabled.")
+    logger.warning(f"Analysis page: '{event_type_col}' column not found in data. Event type filter disabled.")
 
 min_date = df_analysis['start_time'].min().date() if not df_analysis.empty else datetime.date.today()
 max_date = df_analysis['start_time'].max().date() if not df_analysis.empty else datetime.date.today()
@@ -316,7 +321,8 @@ else:
         workload_summary_df = pd.DataFrame() # Ensure it's an empty df
 
     # Create tabs for better organization
-    tab1, tab2, tab3, tab4 = st.tabs(["Summary", "Personnel Analysis", "Time Distribution", "Raw Data"])
+    tab_titles = ["Summary", "Personnel Analysis", "Personnel Comparison", "Time Distribution", "Raw Data"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
 
     with tab1:
         st.subheader("Quick Insights")
@@ -378,7 +384,17 @@ else:
         else:
             st.info("No workload summary data generated for the selected filters (perhaps only 'Unknown' assignments remain).")
 
-    with tab3:
+    with tab3: # This is the new "Personnel Comparison" tab
+        st.subheader("Personnel Effort Comparison by Event Type")
+        try:
+            # Generate and display the grouped bar chart
+            effort_fig = viz.plot_personnel_effort_by_event_type(df_filtered)
+            st.plotly_chart(effort_fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Could not generate personnel effort comparison chart: {e}")
+            logger.error(f"Personnel effort chart error: {e}", exc_info=True)
+
+    with tab4: # This was previously tab3
         st.subheader("Time Distribution Analysis")
         
         # New personnel heatmap visualization
@@ -400,7 +416,7 @@ else:
             st.error(f"Could not generate time distribution charts: {e}")
             logger.error(f"Time distribution error: {e}", exc_info=True)
 
-    with tab4:
+    with tab5: # This was previously tab4
         st.subheader("Raw Data")
         st.dataframe(df_filtered)
         

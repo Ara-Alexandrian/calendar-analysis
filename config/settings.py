@@ -32,7 +32,7 @@ LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 # Ollama is the only supported provider in this simplified version
 LLM_PROVIDER = "ollama"
 # Model name to use with Ollama
-LLM_MODEL = os.environ.get("LLM_MODEL", "mistral:latest")
+LLM_MODEL = os.environ.get("LLM_MODEL", "gemma3:27b") # Changed default model
 # Ollama server URL
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://192.168.1.5:11434")
 

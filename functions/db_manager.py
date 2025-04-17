@@ -1059,6 +1059,51 @@ def get_processed_events_by_batch(batch_id):
         if conn:
             conn.close()
 
+def clear_database_tables():
+    """
+    Clears all data from the main data tables (processed_events).
+    Does NOT delete the tables themselves.
+    
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    if not settings.DB_ENABLED:
+        logger.warning("Database persistence is disabled. Cannot clear tables.")
+        return False
+        
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Failed to connect to database for clearing tables.")
+        return False
+        
+    try:
+        with conn.cursor() as cursor:
+            # Clear the processed events table
+            logger.warning(f"Clearing table: {settings.DB_TABLE_PROCESSED_DATA}")
+            cursor.execute(sql.SQL("TRUNCATE TABLE {} RESTART IDENTITY CASCADE").format(
+                sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)
+            ))
+            
+            # Optionally, clear or reset other related tables if needed
+            # For now, just clearing the main processed data table.
+            # We might want to reset the 'processed' flag on calendar files later.
+            # cursor.execute(sql.SQL("UPDATE {} SET processed = FALSE, is_current = FALSE").format(
+            #     sql.Identifier(settings.DB_TABLE_CALENDAR_FILES)
+            # ))
+            
+            conn.commit()
+            logger.info("Successfully cleared database tables.")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error clearing database tables: {e}")
+        if conn:
+            conn.rollback()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 def get_db_connection_with_retry(max_retries=3, retry_delay=2):
     """
     Attempts to connect to the database with retry logic.
