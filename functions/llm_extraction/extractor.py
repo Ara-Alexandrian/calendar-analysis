@@ -31,98 +31,33 @@ logger = logging.getLogger(__name__)
 def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: list[str]) -> tuple[list[str], str]:
     """
     Internal function to extract names and event type for a single summary using the LLM.
-    Returns tuple: (list of personnel names, event_type string) on success, 
+    Returns tuple: (list of personnel names, event_type string) on success,
     or (["Unknown"], "Unknown") / (["Unknown_Error"], "Unknown_Error") on failure.
     """
     if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
         logger.debug("Skipping extraction for empty or non-string summary.")
         return ["Unknown"], "Unknown" # Return tuple
-      # Smart router functionality has been removed - always use direct client approach
-    # No need for routing since we're only using one extraction method now
-    
-    # Traditional client approach when router is disabled or as fallback
+
     if not llm_client:
-        # Should not happen if called correctly, but safety check
+        logger.error("LLM client is None in _extract_single_physicist_llm.")
         return ["Unknown_Error"], "Unknown_Error" # Return tuple
-        
+
     # Define the list of valid event types provided by the user (comprehensive list)
     valid_event_types = [
-        "Barrigel",
-        "Barrigel OLOL OR",
-        "BR 4D",
-        "BR 4D BH",
-        "BR 4D poss BH",
-        "BR 4D RTP",
-        "BR 4D RTP BH",
-        "BR BH",
-        "BR BH 4D", # (Likely same as BR 4D BH, listed as found)
-        "BR GK SIM",
-        "BR RTP 4D", # (Likely same as BR 4D RTP, listed as found)
-        "BR RTP UNITY",
-        "BR Seed Implant",
-        "BR UNITY CT",
-        "BR UNITY RTP",
-        "BR UNITY RTP 4D",
-        "BR Volume Study",
-        "BR2 SBRT",
-        "BR3 SBRT",
-        "BRG SEED IMPLANT",
-        "CC Chart Rounds", # (Administrative/Meeting)
-        "COV 4D",
-        "COV BH",
-        "COV HDR",
-        "COV HDR T&R",
-        "COV RTP BH",
-        "COV SBRT",
-        "CV1 SBRT",
-        "CV2 SBRT",
-        "Framed GK Tx",
-        "GK MRI",
-        "GK Remote Plan Review", # (Administrative/Planning)
-        "GK SIM",
-        "GK SIM/Tx", # (Combined Event)
-        "GK SBRT Tx", # (Distinct from GK Tx SBRT, listed as found)
-        "GK Tx",
-        "GK Tx SBRT",
-        "GON 4D",
-        "GON BH",
-        "GON Pluvicto",
-        "GON SBRT",
-        "GON Xofigo",
-        "HAM 4D", # Assuming HAM is same as Ham
-        "HAM 4D RTP",
-        "Ham 4D poss BH",
-        "Ham BH",
-        "Ham SBRT",
-        "Hammond SBRT", # (Likely same as Ham SBRT, listed as found)
-        "HOU 4D",
-        "HOU BH",
-        "HOU BH 4D",
-        "HOU SBRT",
-        "Post GK",
-        "Post GK MRI",
-        "Resident's MR-in-Radiotherapy Workshop", # (Administrative/Educational)
-        "Seed Implant", # (Generic)
-        "SpaceOAR Classic",
-        "SpaceOAR Vue",
-        "WH BH",
-        "WH Breast Compression",
-        "WH CT/RTP HDR",
-        "WH HDR",
-        "WH HDR CYL",
-        "WH HDR RTP CYL",
-        "WH HDR T&O",
-        "WH RTP BH",
-        "WH SBRT",
-        # Staffing/Coverage Assignments (Treat as 'Admin' or specific type?) - For now, map to Admin or leave out? Let's add them as distinct for now.
-        "CS UNITY",
-        "CS/SS UNITY",
-        "DN UNITY",
-        "JV UNITY",
-        "JV Unity", # (Variation, likely same as JV UNITY)
-        "SS UNITY",
-        "SS/CS Unity",
-        "SS/DN UNITY"
+        "Barrigel", "Barrigel OLOL OR", "BR 4D", "BR 4D BH", "BR 4D poss BH", "BR 4D RTP",
+        "BR 4D RTP BH", "BR BH", "BR BH 4D", "BR GK SIM", "BR RTP 4D", "BR RTP UNITY",
+        "BR Seed Implant", "BR UNITY CT", "BR UNITY RTP", "BR UNITY RTP 4D", "BR Volume Study",
+        "BR2 SBRT", "BR3 SBRT", "BRG SEED IMPLANT", "CC Chart Rounds", "COV 4D", "COV BH",
+        "COV HDR", "COV HDR T&R", "COV RTP BH", "COV SBRT", "CV1 SBRT", "CV2 SBRT",
+        "Framed GK Tx", "GK Remote Plan Review", "GK SIM", "GK SIM/Tx", "GK SBRT Tx",
+        "GK Tx", "GK Tx SBRT", "GON 4D", "GON BH", "GON Pluvicto", "GON SBRT", "GON Xofigo",
+        "HAM 4D", "HAM 4D RTP", "Ham 4D poss BH", "Ham BH", "Ham SBRT", "Hammond SBRT",
+        "HOU 4D", "HOU BH", "HOU BH 4D", "HOU SBRT", "Post GK", "Post GK MRI",
+        "Resident's MR-in-Radiotherapy Workshop", "Seed Implant", "SpaceOAR Classic",
+        "SpaceOAR Vue", "WH BH", "WH Breast Compression", "WH CT/RTP HDR", "WH HDR",
+        "WH HDR CYL", "WH HDR RTP CYL", "WH HDR T&O", "WH RTP BH", "WH SBRT",
+        "CS UNITY", "CS/SS UNITY", "DN UNITY", "JV UNITY", "JV Unity", "SS UNITY",
+        "SS/CS Unity", "SS/DN UNITY"
     ]
 
     # Construct the prompt
@@ -141,7 +76,7 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     "{summary}"
 
     IMPORTANT: Respond ONLY with a single, valid JSON object containing two keys: "personnel" (a JSON array of strings) and "event_type" (a JSON string).
-    
+
     Examples of CORRECT responses:
     {{"personnel": [], "event_type": "Unknown"}}
     {{"personnel": ["D. Solis"], "event_type": "GK Tx SBRT"}}
@@ -156,88 +91,92 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     Absolutely NO surrounding text or explanations. Your entire response must be JUST the JSON object.
     """
 
+    # --- Start LLM Call ---
+    logger.debug(f"Attempting LLM extraction for summary: '{summary[:50]}...'")
+    logger.debug(f"Prompt sent to LLM:\n{prompt}") # Log the full prompt for debugging
+
     try:
-        # Add timeout to prevent hanging indefinitely
         start_time = time.time()
-        
-        # Set a timeout for the request
-        timeout_seconds = 30  # 30 second timeout
-          # Log that we're about to call the API
-        logger.info(f"Calling Ollama API for summary: '{summary[:30]}...'")
-        
+        timeout_seconds = 30
+
         response = llm_client.chat(
             model=settings.LLM_MODEL,
             messages=[
                 {"role": "system", "content": "You are an assistant that extracts specific personnel names and the event type from text based on a provided list and context. You output ONLY a valid JSON object with keys 'personnel' (list of strings) and 'event_type' (string)."},
                 {"role": "user", "content": prompt}
             ],
-            format='json', # Request JSON format
-            options={'temperature': 0.1, 'timeout': timeout_seconds} # Add timeout and low temperature
+            format='json',
+            options={'temperature': 0.1, 'timeout': timeout_seconds}
         )
-        
+
         elapsed_time = time.time() - start_time
-        logger.info(f"Ollama API call completed in {elapsed_time:.2f} seconds. Response: {str(response)[:150]}...")
+        logger.info(f"Ollama API call completed in {elapsed_time:.2f} seconds.")
+        logger.debug(f"Raw LLM response object: {response}") # Log the full response object
 
         content = response.get('message', {}).get('content', '')
+        logger.debug(f"Extracted LLM response content: {content}") # Log the content string
+
         if not content:
              logger.warning(f"LLM returned empty content for summary: '{summary[:50]}...'")
-             return ["Unknown"], "Unknown" # Return tuple
+             return ["Unknown"], "Unknown"
 
-        # --- Enhanced JSON Parsing Logic ---
+        # --- Parse LLM Response ---
         extracted_personnel = []
         extracted_event_type = "Unknown"
         try:
-            # Attempt to parse the content as JSON object
             extracted_data = json.loads(content)
+            logger.debug(f"Successfully parsed JSON content: {extracted_data}")
 
             if isinstance(extracted_data, dict):
-                # Extract personnel list (default to empty list if key missing or not a list)
                 personnel_list = extracted_data.get('personnel', [])
                 if isinstance(personnel_list, list):
-                     # Validate items are strings
                     extracted_personnel = [item for item in personnel_list if isinstance(item, str)]
+                    logger.debug(f"Extracted personnel list: {extracted_personnel}")
                 else:
                     logger.warning(f"LLM response 'personnel' key was not a list: {personnel_list}")
-                    extracted_personnel = [] # Default to empty list
+                    extracted_personnel = []
 
-                # Extract event type string (default to "Unknown" if key missing or not a string)
                 event_type_str = extracted_data.get('event_type', 'Unknown')
                 if isinstance(event_type_str, str) and event_type_str.strip():
                     extracted_event_type = event_type_str.strip()
+                    logger.debug(f"Extracted event type: '{extracted_event_type}'")
                 else:
                     logger.warning(f"LLM response 'event_type' key was not a valid string: {event_type_str}")
-                    extracted_event_type = "Unknown" # Default to Unknown
-
-                logger.debug(f"LLM parsed object: personnel={extracted_personnel}, event_type='{extracted_event_type}'")
-
+                    extracted_event_type = "Unknown"
             else:
                 logger.warning(f"LLM (JSON mode) returned unexpected format (not dict): {content[:100]}")
-                # Keep defaults: extracted_personnel = [], extracted_event_type = "Unknown"
 
         except JSONDecodeError as json_err:
             logger.error(f"Failed to decode JSON object response from LLM for '{summary[:30]}...': {content[:100]}. Error: {str(json_err)}")
-            return ["Unknown_Error"], "Unknown_Error" # Indicate a structural error from LLM
+            return ["Unknown_Error"], "Unknown_Error"
         except Exception as e:
              logger.error(f"Error processing LLM response content structure: {e}\nResponse content: {content[:100]}")
              return ["Unknown_Error"], "Unknown_Error"
 
-        # --- Validation Against Canonical List ---
+        # --- Validate Extracted Data ---
         validated_names = [name for name in extracted_personnel if name in canonical_names]
+        logger.debug(f"Validated personnel names against canonical list: {validated_names}")
+
+        # Validate event type against the provided list
+        if extracted_event_type not in valid_event_types:
+            logger.warning(f"Extracted event type '{extracted_event_type}' not in valid list for summary '{summary[:50]}...'. Setting to Unknown.")
+            validated_event_type = "Unknown"
+        else:
+            validated_event_type = extracted_event_type
 
         if not validated_names:
-            logger.debug(f"LLM found no known physicists in: '{summary[:30]}...' (Raw response: {content[:50]}...)")
-            # Return ["Unknown"] for personnel, but keep the extracted event type if valid
-            return ["Unknown"], extracted_event_type 
+            logger.debug(f"LLM found no known physicists in: '{summary[:30]}...'")
+            return ["Unknown"], validated_event_type # Return "Unknown" personnel, but keep validated event type
         else:
-            logger.debug(f"LLM validated {validated_names} in '{summary[:30]}...'")
-            # Return validated names and the extracted event type
-            return validated_names, extracted_event_type 
+            logger.debug(f"LLM validated {validated_names} and event type '{validated_event_type}' in '{summary[:30]}...'")
+            return validated_names, validated_event_type
 
     except Exception as e:
-        # Catch Ollama client errors / network errors etc. during the API call
-        logger.error(f"Error calling Ollama API for summary '{summary[:30]}...': {e}")
-        # Indicate an error occurred during the call
-        return ["Unknown_Error"], "Unknown_Error"
+        logger.error(f"Error calling Ollama API or processing response for summary '{summary[:30]}...': {e}", exc_info=True) # Log full traceback
+        return ["Unknown_Error"], "Unknown_Error" # Indicate an error occurred
+
+# --- Remaining functions (extract_personnel_with_llm, run_llm_extraction_parallel, etc.) remain unchanged ---
+# ... (Keep the rest of the file content as it was) ...
 
 def extract_personnel_with_llm(summary: str, llm_client, canonical_names: list[str], retry_count=3) -> tuple[list[str], str]:
     """
@@ -253,13 +192,13 @@ def extract_personnel_with_llm(summary: str, llm_client, canonical_names: list[s
     except Exception as e:
         # Log the error
         logger.error(f"LLM extraction error: {str(e)}")
-        
+
         # Retry logic
         if retry_count > 0:
             logger.info(f"Retrying extraction for '{summary[:30]}...'. Attempts left: {retry_count-1}")
             time.sleep(2)  # Backoff before retry
             return extract_personnel_with_llm(summary, llm_client, canonical_names, retry_count-1)
-        
+
         # Return fallback after all retries fail
         logger.error(f"All retry attempts failed for '{summary[:30]}...'")
         return ["Unknown_Error"], "Unknown_Error" # Return tuple for error
@@ -277,7 +216,7 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     """
     if not is_llm_ready():
         st.error("LLM client is not available. Cannot perform extraction.")
-        df['extracted_personnel'] = [["Unknown_Error"]] * len(df) 
+        df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
         df['extracted_event_type'] = ["Unknown_Error"] * len(df)
         return df
 
@@ -314,7 +253,7 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     term_progress = get_persistent_progress_bar(len(summaries), "LLM Extraction")
     total_summaries = len(summaries)
     completed_count = 0
-    
+
     # Test extraction with a single item first to validate the LLM connectivity
     logger.info("Testing LLM extraction with a single item first...")
     test_summary = summaries[0] if summaries else "Test event"
@@ -342,60 +281,12 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
                 executor.submit(extract_personnel_with_llm, summary, llm_client, canonical_names): i
                 for i, summary in enumerate(summaries)
             }
-            
-            # Add timeout to prevent hanging indefinitely
-            active_futures = list(future_to_index.keys())
-            timeout_occurred = False
-            
-            # Monitor the first few futures to detect if processing is stalled
-            monitoring_count = min(5, len(active_futures)) if len(summaries) > 5 else 1
-            
-            # Set an overall timeout for checking if parallel processing is working
-            parallel_check_timeout = 60  # 1 minute to check if parallel processing works
-            parallel_check_start = time.time()
-            
-            # Check if any futures complete in the given timeout
-            completed_futures = as_completed(active_futures[:monitoring_count], timeout=parallel_check_timeout)
-            
-            try:
-                # Get at least one future to validate parallel processing works
-                first_future = next(completed_futures)
-                idx = future_to_index[first_future]
-                personnel_list, event_type = first_future.result() # Unpack tuple
-                personnel_results[idx] = personnel_list
-                event_type_results[idx] = event_type
-                completed_count += 1
-                term_progress.update(1)  # Update the terminal progress bar
-                
-                # If we got here, at least one future completed successfully, proceed with parallel
-                logger.info("Parallel processing verified working, continuing with parallel extraction")
-            except TimeoutError:
-                # If no futures complete within timeout, switch to sequential
-                logger.warning(f"No futures completed within {parallel_check_timeout}s timeout. Switching to sequential mode.")
-                st.warning("Parallel processing appears to be stalled. Switching to sequential processing mode.")
-                timeout_occurred = True
-            except Exception as e:
-                logger.error(f"Error processing first batch of futures: {e}")
-                st.warning("Error in parallel processing. Switching to sequential mode for reliability.")
-                timeout_occurred = True
-                
-            # If timeout occurred or other problem detected, switch to sequential
-            if timeout_occurred:
-                # Cancel all pending futures
-                for future in active_futures:
-                    future.cancel()
-                
-                term_progress.close()  # Close the terminal progress bar
-                # Switch to sequential mode
-                return run_llm_extraction_sequential(df)
-            
-            # Continue with parallel processing for the remaining futures
-            
+
             # Add timeout to detect stuck processes
             timeout_start = time.time()
             timeout_limit = 300  # 5 minutes timeout for the entire process
 
-            for future in as_completed(active_futures):
+            for future in as_completed(future_to_index): # Use as_completed directly
                 if time.time() - timeout_start > timeout_limit:
                     logger.error("Processing timeout: Exceeded 5 minutes.")
                     st.error("Processing timeout: Please try again or check the logs.")
@@ -452,7 +343,7 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
         logger.error(f"An error occurred during the parallel LLM execution: {e}")
         st.warning(f"Parallel processing error: {e}. Switching to sequential processing.")
         term_progress.close()  # Close the terminal progress bar
-        
+
         # If parallel execution fails completely, fall back to sequential processing
         try:
             return run_llm_extraction_sequential(df)
@@ -473,6 +364,9 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     df_copy['extracted_personnel'] = personnel_results
     df_copy['extracted_event_type'] = event_type_results
     return df_copy
+
+# --- Keep ultra_basic_extraction, run_llm_extraction_sequential, run_llm_extraction_background ---
+# ... (rest of the file content) ...
 
 import os
 import sys
@@ -669,27 +563,27 @@ def run_llm_extraction_sequential(df: pd.DataFrame) -> pd.DataFrame:
         logger.error("'summary' column not found in DataFrame. Cannot extract.")
         df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
         return df
-        
+
     # Process sequentially using our new sequential processor
     try:
         # Get canonical names for validation
         _, _, canonical_names = config_manager.get_personnel_details()
-        
+
         # Initialize sequential processor for reliable event-by-event processing
         from .sequential_processor import SequentialProcessor
         processor = SequentialProcessor()
-        
+
         # Log start of sequential processing
         logger.info(f"Starting sequential processing of {len(df)} events...")
-        
+
         # Process the dataframe with sequential processor
         start_time = time.time()
         result_df = processor.process_dataframe(df, summary_col="summary", canonical_names=canonical_names)
         elapsed = time.time() - start_time
-        
+
         logger.info(f"Sequential processing complete in {elapsed:.2f} seconds")
         return result_df
-        
+
     except Exception as e:
         logger.error(f"Error in sequential extraction: {e}")
         # Add an empty extraction column as fallback
@@ -704,7 +598,7 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
     Args:
         df: DataFrame containing a 'summary' column
         batch_id: Unique identifier for this processing batch
-        
+
     Returns:
         bool: True if processing started successfully
     """
@@ -731,7 +625,7 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
 
         # Import here to avoid circular imports
         from functions import db_manager
-        
+
         # First save the preprocessed data to database with 'processing' status (if DB enabled)
         if settings.DB_ENABLED:
             df_copy['processing_status'] = 'processing'
@@ -740,7 +634,7 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
             # Initialize the background_processed_data in session state for non-DB mode
             if not hasattr(st.session_state, 'background_processed_data'):
                 st.session_state.background_processed_data = {}
-            
+
             # Initialize with empty status
             st.session_state.background_processed_data[batch_id] = {
                 'status': 'in_progress',
@@ -750,36 +644,36 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                 'total_events': len(summaries),
                 'processed_events': 0
             }
-        
+
         # Start background thread for processing
         def process_in_background():
             logger.info(f"Starting background LLM extraction for batch {batch_id} with {len(summaries)} summaries")
               # Create a persistent terminal progress bar for the background process that's clearly visible
             if TQDM_AVAILABLE:
-                term_progress = tqdm(total=len(summaries), desc=f"Batch {batch_id}", position=0, leave=True, 
+                term_progress = tqdm(total=len(summaries), desc=f"Batch {batch_id}", position=0, leave=True,
                                     bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
             else:
                 term_progress = get_persistent_progress_bar(len(summaries), f"Background LLM Extraction (Batch {batch_id})")
-            
+
             print(f"\n\033[1m>>> Processing {len(summaries)} items with batch ID {batch_id} <<<\033[0m")
-            
+
             # Get a fresh LLM client for this thread
             thread_llm_client = get_llm_client()
             _, _, thread_canonical_names = config_manager.get_personnel_details()
-            
+
             if not thread_llm_client or not thread_canonical_names:
                 logger.error(f"Thread failed to get LLM client or canonical names for batch {batch_id}")
                 term_progress.close()
                 return
-                
+
             # Process in small batches with simple sequential processing
             batch_size = 5  # Process 5 summaries at a time
             save_frequency = 10  # Save results to DB every 10 items
-            
+
             # Track progress
             processed_count = 0
             error_count = 0
-            
+
             # Process one summary at a time for reliability
             for i, summary in enumerate(summaries):
                 try:
@@ -805,13 +699,13 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                     processed_count += 1
                     term_progress.update(1)
                     progress = processed_count / len(summaries)
-                    
+
                     # Print direct status updates that will be visible in terminal
                     if processed_count % 5 == 0 or processed_count == 1:
-                        print(f"✓ Processed {processed_count}/{len(summaries)} ({progress*100:.2f}%) - Last result: {str(result)[:50]}...")
-                    
-                    logger.info(f"Progress: {processed_count}/{len(summaries)} ({progress*100:.2f}%) - Result: {result}")
-                    
+                        print(f"✓ Processed {processed_count}/{len(summaries)} ({progress*100:.2f}%) - Last result: {str(result)[:50]}...") # Corrected variable name
+
+                    logger.info(f"Progress: {processed_count}/{len(summaries)} ({progress*100:.2f}%) - Result: {personnel_list}, {event_type}") # Corrected variable name
+
                     # Add a small delay to avoid overwhelming the server
                     time.sleep(0.1)
 
@@ -829,37 +723,37 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                         time.sleep(2)  # Longer delay after multiple errors
                     else:
                         time.sleep(0.5)  # Brief delay after an error
-            
+
             # After all individual processing is done, save final results
             if settings.DB_ENABLED:
                 logger.info(f"Saving final results for batch {batch_id}")
                 db_manager.save_partial_processed_data(df_copy, batch_id)
-            
+
             # Import normalizer module for the next step
             from .normalizer import normalize_extracted_personnel
-            
+
             # Normalize the extracted personnel
             logger.info(f"Normalizing extracted names for batch {batch_id}")
             try:
                 normalized_df = normalize_extracted_personnel(df_copy)
-                
+
                 # Save final normalized results
                 if settings.DB_ENABLED:
                     db_manager.save_partial_processed_data(normalized_df, batch_id)
-                    
+
                     # Explode by personnel for final analysis-ready data
                     from functions import data_processor
                     logger.info(f"Exploding by personnel for batch {batch_id}")
                     analysis_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
                     db_manager.save_processed_data_to_db(analysis_df, batch_id)
-                    
+
                     # Mark the calendar file as processed
                     db_manager.mark_calendar_file_as_processed(batch_id)
                 else:
                     # Store results in session state for non-DB mode
                     from functions import data_processor
                     analysis_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
-                    
+
                     if hasattr(st.session_state, 'background_processed_data'):
                         st.session_state.background_processed_data[batch_id] = {
                             'normalized_df': normalized_df,
@@ -871,24 +765,24 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                             'total_events': len(summaries),
                             'processed_events': len(summaries)
                         }
-                
+
                 logger.info(f"Background processing complete for batch {batch_id}")
-                
+
             except Exception as e:
                 logger.error(f"Error during final processing steps for batch {batch_id}: {e}")
-            
+
             term_progress.close()  # Close the terminal progress bar when complete
-        
+
         # Start the processing thread
         background_thread = threading.Thread(
             target=process_in_background,
             daemon=True  # Make thread a daemon so it doesn't block app shutdown
         )
         background_thread.start()
-        
+
         logger.info(f"Background processing thread started for batch {batch_id}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Error setting up background LLM extraction: {e}")
         return False

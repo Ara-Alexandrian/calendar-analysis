@@ -131,7 +131,7 @@ else:
                     
                     # Also save to PostgreSQL database if enabled
                     if settings.DB_ENABLED:
-                        from functions import db_manager
+                        from functions import db as db_manager # Correct import for db package
                         from config import settings
                         try:
                             db_save_success = db_manager.save_personnel_config_to_db(new_config_dict)

@@ -128,6 +128,7 @@ EVENT_TYPE_MAPPING = {
     "ss unity": "SS UNITY",
     "ss/cs unity": "SS/CS Unity",
     "ss/dn unity": "SS/DN UNITY",
+    "gk mri": "GK MRI", # Added missing event type
     "unknown": "Unknown", # Ensure Unknown maps to Unknown
 }
 

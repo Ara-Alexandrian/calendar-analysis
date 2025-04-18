@@ -191,5 +191,29 @@
             "KING 3",
             "KING III"
         ]
+    },
+    "G. Debevec": {
+        "role": "physicist",
+        "clinical_pct": 0.0,
+        "variations": [
+            "G. Debevec",
+            "Debevec"
+        ]
+    },
+    "T. Hagan": {
+        "role": "physicist",
+        "clinical_pct": 0.0,
+        "variations": [
+            "T. Hagan",
+            "Hagan"
+        ]
+    },
+    "A. Stam": {
+        "role": "physicist",
+        "clinical_pct": 0.0,
+        "variations": [
+            "A. Stam",
+            "Stam"
+        ]
     }
 }

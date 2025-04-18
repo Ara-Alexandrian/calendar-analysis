@@ -97,9 +97,10 @@ def plot_daily_hourly_heatmap(df_filtered: pd.DataFrame):
     df_plot['day_of_week'] = pd.Categorical(df_plot['day_of_week'], categories=day_order, ordered=True)
 
     # Create pivot table for heatmap
-    heatmap_data = df_plot.pivot_table(index='day_of_week', columns='hour', values='uid', aggfunc='count', fill_value=0)
-    # Ensure all hours 0-23 are present
-    heatmap_data = heatmap_data.reindex(columns=range(24), fill_value=0)
+    # Using observed=True in groupby before pivoting might be more efficient if many combinations are missing
+    heatmap_data_grouped = df_plot.groupby(['day_of_week', 'hour'], observed=True)['uid'].count().unstack(fill_value=0)
+    # Ensure all hours 0-23 and all days are present
+    heatmap_data = heatmap_data_grouped.reindex(index=day_order, columns=range(24), fill_value=0)
 
     fig = px.imshow(heatmap_data,
                     labels=dict(x="Hour of Day", y="Day of Week", color="Number of Events"),
@@ -145,6 +146,7 @@ def plot_personnel_effort_by_event_type(df_filtered: pd.DataFrame):
         return go.Figure()
         
     # Group by personnel and event type, summing duration
+    # Explicitly set observed=True to align with future pandas behavior and potentially improve performance
     effort_data = df_filtered.groupby(['personnel', event_type_col], observed=True)['duration_hours'].sum().reset_index()
     
     if effort_data.empty:

@@ -15,7 +15,8 @@ if PROJECT_ROOT not in sys.path:
 from functions import analysis_calculations as ac
 from functions import visualization_plotly as viz
 from functions import config_manager # To get personnel list, roles
-from functions import db_manager # For real-time database queries
+# from functions import db_manager # Old import causing error
+from functions import db as db_manager # Import the new db package
 from functions import llm_extraction # For checking background processing status
 
 logger = logging.getLogger(__name__)
@@ -39,84 +40,84 @@ if 'refresh_interval' not in st.session_state:
 def load_latest_data():
     """Loads the most up-to-date data from either session state or database"""
     data_source = st.session_state.get('data_source', 'session')
-    
-    # Log what's in session state for debugging
-    logger.info(f"Session state keys: {list(st.session_state.keys())}")
-    
-    # Check for our newly added analysis_data structure first
+    logger.info(f"Attempting to load data. Selected source: {data_source}")
+
+    # --- Priority 1: Database if selected ---
+    if data_source == 'database' and settings.DB_ENABLED:
+        logger.info("Attempting to load from database (real-time)...")
+        try:
+            # Get data from the last 90 days by default (can be filtered later)
+            end_date = datetime.datetime.now()
+            start_date = end_date - datetime.timedelta(days=90) # Adjust range as needed
+            df = db_manager.get_processed_events(start_date=start_date, end_date=end_date, limit=10000) # Increased limit
+            if df is not None and not df.empty:
+                logger.info(f"SUCCESS: Loaded {len(df)} records from database (real-time)")
+                # Ensure required columns exist for basic analysis, add placeholders if missing
+                required_cols = ['uid', 'summary', 'start_time', 'end_time', 'duration_hours', 'personnel', 'role', 'clinical_pct', 'extracted_event_type']
+                for col in required_cols:
+                    if col not in df.columns:
+                        logger.warning(f"Database data missing column '{col}'. Adding placeholder.")
+                        if col in ['role', 'personnel', 'extracted_event_type']:
+                             df[col] = "Unknown" # Placeholder string
+                        elif col in ['clinical_pct', 'duration_hours']:
+                             df[col] = 0.0 # Placeholder float
+                        else:
+                             df[col] = None # Placeholder None
+                return df
+            else:
+                logger.info("Database query returned no data.")
+        except Exception as e:
+            logger.error(f"Error loading data from database: {e}", exc_info=True)
+            st.error("Could not load data from database. Check connection and logs.")
+            # Do not proceed further if DB load fails when selected
+
+    # --- Priority 2: Session State (most recent processed batch) ---
+    logger.info("Attempting to load from session state ('analysis_data')...")
     if 'analysis_data' in st.session_state and st.session_state.analysis_data:
         try:
             # Get the most recent batch if available
             if 'most_recent_batch' in st.session_state and st.session_state.most_recent_batch in st.session_state.analysis_data:
                 batch_key = st.session_state.most_recent_batch
                 df = st.session_state.analysis_data[batch_key]['df']
-                logger.info(f"Loaded {len(df)} records from analysis_data[{batch_key}]")
+                logger.info(f"SUCCESS: Loaded {len(df)} records from session state analysis_data['{batch_key}']")
                 return df
             # Otherwise use the latest batch by timestamp
             elif st.session_state.analysis_data:
-                latest_batch = max(st.session_state.analysis_data.keys(), 
+                latest_batch = max(st.session_state.analysis_data.keys(),
                                   key=lambda k: st.session_state.analysis_data[k].get('timestamp', 0))
                 df = st.session_state.analysis_data[latest_batch]['df']
-                logger.info(f"Loaded {len(df)} records from latest analysis_data batch: {latest_batch}")
+                logger.info(f"SUCCESS: Loaded {len(df)} records from latest session state analysis_data batch: {latest_batch}")
                 return df
         except Exception as e:
-            logger.error(f"Error loading from analysis_data: {e}")
-    
-    # Check for background processing data
-    if st.session_state.get('llm_background_processing', False):
-        batch_id = st.session_state.get('current_batch_id')
-        
-        if batch_id:
-            if settings.DB_ENABLED:
-                # Try to load the latest processed data from database
-                try:
-                    # Get data from the database for this batch
-                    df = db_manager.get_processed_events_by_batch(batch_id)
-                    if not df.empty:
-                        logger.info(f"Loaded {len(df)} background processed records from database")
-                        return df
-                except Exception as e:
-                    logger.error(f"Error loading background processed data from database: {e}")
-            else:
-                # If DB not enabled, check session state background data
-                if hasattr(st.session_state, 'background_processed_data') and batch_id in st.session_state.background_processed_data:
-                    background_data = st.session_state.background_processed_data[batch_id]
-                    if 'analysis_df' in background_data and not background_data['analysis_df'].empty:
-                        logger.info(f"Loaded {len(background_data['analysis_df'])} records from background processing session state")
-                        return background_data['analysis_df']
-    
-    if data_source == 'database' and settings.DB_ENABLED:
-        # Try to load from database
-        try:
-            # Get data from the last 90 days by default (can be filtered later)
-            end_date = datetime.datetime.now()
-            start_date = end_date - datetime.timedelta(days=90)
-            df = db_manager.get_processed_events(start_date=start_date, end_date=end_date, limit=10000)
-            if not df.empty:
-                logger.info(f"Loaded {len(df)} records from database in real-time")
-                return df
-        except Exception as e:
-            logger.error(f"Error loading data from database: {e}")
-            st.error("Could not load data from database. Using session data instead.")
-    
-    # Fall back to standard session state locations
-    if 'analysis_ready_df' in st.session_state and st.session_state.analysis_ready_df is not None and not st.session_state.analysis_ready_df.empty:
-        logger.info(f"Loaded {len(st.session_state.analysis_ready_df)} records from analysis_ready_df")
-        return st.session_state.analysis_ready_df
-    
-    if 'normalized_df' in st.session_state and st.session_state.normalized_df is not None:
-        # Need to explode the data since it's not analysis-ready yet
-        try:
-            from functions import data_processor
-            df = data_processor.explode_by_personnel(st.session_state.normalized_df, personnel_col='assigned_personnel')
-            if not df.empty:
-                logger.info(f"Loaded and exploded {len(df)} records from normalized_df")
-                return df
-        except Exception as e:
-            logger.error(f"Error exploding normalized_df: {e}")
-    
-    # If still no data, return None
-    logger.warning("Analysis page: load_latest_data() returned None. No data found in any storage location.")
+            logger.error(f"Error loading from session state analysis_data: {e}", exc_info=True)
+
+    # --- Priority 3: Fallback Session State Variables (if session source selected) ---
+    if data_source == 'session':
+        logger.info("Attempting to load from fallback session state variables ('analysis_ready_df', 'normalized_df')...")
+        if 'analysis_ready_df' in st.session_state and st.session_state.analysis_ready_df is not None and not st.session_state.analysis_ready_df.empty:
+            logger.info(f"SUCCESS: Loaded {len(st.session_state.analysis_ready_df)} records from session state 'analysis_ready_df'")
+            return st.session_state.analysis_ready_df
+
+        if 'normalized_df' in st.session_state and st.session_state.normalized_df is not None and not st.session_state.normalized_df.empty:
+            logger.info("Found 'normalized_df' in session state. Attempting to explode...")
+            try:
+                from functions import data_processor
+                # Ensure the personnel column exists before exploding
+                personnel_col = 'assigned_personnel' if 'assigned_personnel' in st.session_state.normalized_df.columns else 'extracted_personnel'
+                if personnel_col in st.session_state.normalized_df.columns:
+                     df = data_processor.explode_by_personnel(st.session_state.normalized_df, personnel_col=personnel_col)
+                     if df is not None and not df.empty:
+                         logger.info(f"SUCCESS: Loaded and exploded {len(df)} records from session state 'normalized_df'")
+                         return df
+                     else:
+                          logger.warning("Exploding 'normalized_df' resulted in empty DataFrame.")
+                else:
+                     logger.warning(f"Could not find suitable personnel column ('{personnel_col}') in 'normalized_df' to explode.")
+            except Exception as e:
+                logger.error(f"Error exploding 'normalized_df': {e}", exc_info=True)
+
+    # --- If still no data ---
+    logger.warning("Analysis page: load_latest_data() returning None. No data found in any checked location.")
     return None
 
 # Sidebar controls for real-time updates
