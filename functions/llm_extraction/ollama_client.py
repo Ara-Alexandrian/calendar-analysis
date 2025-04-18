@@ -87,6 +87,35 @@ def get_ollama_client():
         logger.error(f"Error creating Ollama client: {e}")
         return None
 
+def get_available_models():
+    """
+    Fetch list of available models from Ollama server.
+    
+    Returns:
+        list: List of available model names or empty list if failed
+    """
+    client = get_ollama_client()
+    if not client:
+        logger.error("Cannot get models - Ollama client unavailable")
+        return []
+    
+    try:
+        logger.debug("Attempting to list available Ollama models")
+        models_response = client.list()
+        
+        # Extract model names from response
+        model_names = []
+        for model in models_response.get('models', []):
+            model_name = model.get('name', '')
+            if model_name:
+                model_names.append(model_name)
+        
+        logger.info(f"Found {len(model_names)} available Ollama models")
+        return model_names
+    except Exception as e:
+        logger.error(f"Error listing Ollama models: {e}")
+        return []
+
 def extract_personnel(summary, canonical_names=None):
     """
     Extract personnel names from event summary using the Ollama LLM.

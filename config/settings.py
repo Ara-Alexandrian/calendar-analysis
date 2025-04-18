@@ -116,8 +116,7 @@ EVENT_TYPE_MAPPING = {
     "wh ct/rtp hdr": "WH CT/RTP HDR",
     "wh hdr": "WH HDR",
     "wh hdr cyl": "WH HDR CYL",
-    "wh hdr rtp cyl": "WH HDR RTP CYL",
-    "wh hdr t&o": "WH HDR T&O",
+    "wh hdr rtp cyl": "WH HDR RTP CYL",    "wh hdr t&o": "WH HDR T&O",
     "wh rtp bh": "WH RTP BH",
     "wh sbrt": "WH SBRT",
     "cs unity": "CS UNITY",
@@ -129,6 +128,14 @@ EVENT_TYPE_MAPPING = {
     "ss/cs unity": "SS/CS Unity",
     "ss/dn unity": "SS/DN UNITY",
     "gk mri": "GK MRI", # Added missing event type
+    # New event types added to match extractor.py
+    "br rtp sbrt bh": "BR RTP SBRT BH",
+    "br rtp bh": "BR RTP BH", 
+    "wh ct/rtp hdr cyl": "WH CT/RTP HDR CYL",
+    "ham 4d ct rtp": "Ham 4D CT RTP",
+    "gon 4d rtp bh": "GON 4D RTP BH",
+    "wh hdr cyl 4d": "WH HDR CYL 4D",    "br sbrt": "BR SBRT",
+    "gk framed tx": "GK Framed Tx", # Added variation of "Framed GK Tx"
     "unknown": "Unknown", # Ensure Unknown maps to Unknown
 }
 

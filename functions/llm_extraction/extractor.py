@@ -36,29 +36,12 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
     """
     if not summary or not isinstance(summary, str) or len(summary.strip()) == 0:
         logger.debug("Skipping extraction for empty or non-string summary.")
-        return ["Unknown"], "Unknown" # Return tuple
-
-    if not llm_client:
+        return ["Unknown"], "Unknown" # Return tuple    if not llm_client:
         logger.error("LLM client is None in _extract_single_physicist_llm.")
-        return ["Unknown_Error"], "Unknown_Error" # Return tuple
-
-    # Define the list of valid event types provided by the user (comprehensive list)
-    valid_event_types = [
-        "Barrigel", "Barrigel OLOL OR", "BR 4D", "BR 4D BH", "BR 4D poss BH", "BR 4D RTP",
-        "BR 4D RTP BH", "BR BH", "BR BH 4D", "BR GK SIM", "BR RTP 4D", "BR RTP UNITY",
-        "BR Seed Implant", "BR UNITY CT", "BR UNITY RTP", "BR UNITY RTP 4D", "BR Volume Study",
-        "BR2 SBRT", "BR3 SBRT", "BRG SEED IMPLANT", "CC Chart Rounds", "COV 4D", "COV BH",
-        "COV HDR", "COV HDR T&R", "COV RTP BH", "COV SBRT", "CV1 SBRT", "CV2 SBRT",
-        "Framed GK Tx", "GK Remote Plan Review", "GK SIM", "GK SIM/Tx", "GK SBRT Tx",
-        "GK Tx", "GK Tx SBRT", "GON 4D", "GON BH", "GON Pluvicto", "GON SBRT", "GON Xofigo",
-        "HAM 4D", "HAM 4D RTP", "Ham 4D poss BH", "Ham BH", "Ham SBRT", "Hammond SBRT",
-        "HOU 4D", "HOU BH", "HOU BH 4D", "HOU SBRT", "Post GK", "Post GK MRI",
-        "Resident's MR-in-Radiotherapy Workshop", "Seed Implant", "SpaceOAR Classic",
-        "SpaceOAR Vue", "WH BH", "WH Breast Compression", "WH CT/RTP HDR", "WH HDR",
-        "WH HDR CYL", "WH HDR RTP CYL", "WH HDR T&O", "WH RTP BH", "WH SBRT",
-        "CS UNITY", "CS/SS UNITY", "DN UNITY", "JV UNITY", "JV Unity", "SS UNITY",
-        "SS/CS Unity", "SS/DN UNITY"
-    ]
+        return ["Unknown_Error"], "Unknown_Error" # Return tuple    
+        
+    # Get valid event types from settings.py - single source of truth
+    valid_event_types = list(settings.EVENT_TYPE_MAPPING.values())
 
     # Construct the prompt
     prompt = f"""
@@ -151,19 +134,32 @@ def _extract_single_physicist_llm(summary: str, llm_client, canonical_names: lis
             return ["Unknown_Error"], "Unknown_Error"
         except Exception as e:
              logger.error(f"Error processing LLM response content structure: {e}\nResponse content: {content[:100]}")
-             return ["Unknown_Error"], "Unknown_Error"
-
-        # --- Validate Extracted Data ---
-        validated_names = [name for name in extracted_personnel if name in canonical_names]
+             return ["Unknown_Error"], "Unknown_Error"        # --- Validate Extracted Data ---
+        validated_names = []
+        for name in extracted_personnel:
+            # Check for exact match first
+            if name in canonical_names:
+                validated_names.append(name)
+                continue
+                
+            # Otherwise check for case-insensitive match
+            for canonical_name in canonical_names:
+                if name.lower() == canonical_name.lower():
+                    validated_names.append(canonical_name)  # Use the canonical version
+                    break
+        
         logger.debug(f"Validated personnel names against canonical list: {validated_names}")
 
-        # Validate event type against the provided list
-        if extracted_event_type not in valid_event_types:
+        # Validate event type against the provided list - using case-insensitive matching
+        validated_event_type = "Unknown"
+        for valid_type in valid_event_types:
+            if extracted_event_type.lower() == valid_type.lower():
+                validated_event_type = valid_type  # Use the official casing
+                break
+                
+        if validated_event_type == "Unknown":
             logger.warning(f"Extracted event type '{extracted_event_type}' not in valid list for summary '{summary[:50]}...'. Setting to Unknown.")
-            validated_event_type = "Unknown"
-        else:
-            validated_event_type = extracted_event_type
-
+        
         if not validated_names:
             logger.debug(f"LLM found no known physicists in: '{summary[:30]}...'")
             return ["Unknown"], validated_event_type # Return "Unknown" personnel, but keep validated event type
