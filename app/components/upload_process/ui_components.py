@@ -138,6 +138,8 @@ def render_resume_redo_buttons(batch_id, batch_status, db_enabled):
             st.session_state.processing_triggered = True
             if not db_enabled:
                 st.success("Resume processing triggered!")
+            # Force page rerun to trigger the processing
+            st.rerun()
     
     with col2:
         if st.button("🔄 Redo Analysis", help="Start fresh with current LLM settings"):
@@ -146,6 +148,8 @@ def render_resume_redo_buttons(batch_id, batch_status, db_enabled):
             st.session_state.processing_triggered = True
             if not db_enabled:
                 st.success("Redo processing triggered!")
+            # Force page rerun to trigger the processing
+            st.rerun()
 
 def render_processing_mode_selection(batch_id, batch_status):
     """Render the processing mode selection radio buttons."""
@@ -169,7 +173,7 @@ def render_processing_mode_selection(batch_id, batch_status):
                     "Choose processing mode:",
                     ("Resume Processing", "Start Fresh (Reprocess All)"),
                     key="resume_radio",
-                    index=0 if st.session_state.processing_mode == "Resume Processing" else 1,  # Default based on session state
+                    index=0 if st.session_state.processing_mode == "Resume Processing" else 1,
                     help="Resume: Process only events not yet processed. Start Fresh: Reprocess all events."
                 )
                 st.session_state.processing_mode = processing_mode_choice  # Update session state immediately

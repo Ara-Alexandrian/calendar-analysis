@@ -3,7 +3,7 @@ LLM Extraction package for Calendar Analysis.
 Simplified version that only uses Ollama.
 """
 # Import necessary functions from our simplified client and make them available at the package level
-from .ollama_client import is_ollama_ready, get_ollama_client, extract_personnel, OLLAMA_AVAILABLE
+from .ollama_client import is_ollama_ready, get_ollama_client, extract_personnel, get_available_models, OLLAMA_AVAILABLE
 from .extractor import (
     run_llm_extraction_parallel,
     run_llm_extraction_sequential,
@@ -17,6 +17,7 @@ __all__ = [
     'is_ollama_ready',
     'get_ollama_client', 
     'extract_personnel',
+    'get_available_models',
     'OLLAMA_AVAILABLE',
     'run_llm_extraction_parallel',
     'run_llm_extraction_sequential',
