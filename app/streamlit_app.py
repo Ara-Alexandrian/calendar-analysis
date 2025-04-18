@@ -2,31 +2,34 @@
 Calendar Workload Analyzer - Main Streamlit Application
 This is the main entry point for the Streamlit application.
 """
-import streamlit as st
+# Standard library imports
 import sys
 import os
 import logging
+import traceback
 from pathlib import Path
 
-# Add imports for debugging
-import traceback
+# First, set up the Python path before any other imports
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-# Explicitly add the project root to the Python path
-# This should ensure the config module is found
+# Now import streamlit
+import streamlit as st
+
+# CRITICAL: Set page configuration FIRST, before any other st.* calls
+st.set_page_config(
+    page_title="Calendar Workload Analyzer",
+    page_icon="📅",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Now try to load settings
 try:
-    # Calculate the project root path
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    
-    # Add to path if not already there
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    
-    # Import settings and configure logging
     from config import settings
 except Exception as e:
-    st.error(f"Error importing modules: {e}")
-    st.code(traceback.format_exc())
-    # Continue with default settings to avoid crashing completely
+    # Create default settings
     class DefaultSettings:
         APP_TITLE = "Calendar Workload Analyzer"
         LOGGING_LEVEL = logging.INFO
@@ -41,8 +44,9 @@ except Exception as e:
     
     settings = DefaultSettings()
     st.warning("Using default settings due to import error. Some features may be limited.")
+    st.error(f"Error importing modules: {e}")
+    st.code(traceback.format_exc())
 
-# Configure logging
 # Configure logging
 # Ensure the output directory exists
 log_dir = os.path.dirname(settings.LOG_FILE)
@@ -71,14 +75,6 @@ if settings.DB_ENABLED:
         logger.error(f"Error during database initialization: {db_init_error}")
         st.error("Database initialization failed. Check the logs for details.")
 
-# Set page configuration
-st.set_page_config(
-    page_title=settings.APP_TITLE,
-    page_icon="📅",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # Initialize session state variables for persistent storage across pages
 if 'uploaded_filename' not in st.session_state:
     st.session_state.uploaded_filename = None
@@ -96,7 +92,7 @@ if 'analysis_ready_df' not in st.session_state:
     st.session_state.analysis_ready_df = None
 if 'current_batch_id' not in st.session_state:
     st.session_state.current_batch_id = None
-    
+
 # Main app header
 st.title(f"📅 {settings.APP_TITLE}")
 

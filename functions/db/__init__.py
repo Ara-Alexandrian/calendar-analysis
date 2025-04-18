@@ -28,7 +28,8 @@ from .personnel_ops import (
     save_personnel_config_to_db,
     load_personnel_config_from_db
 )
-from .status_ops import get_latest_processing_status, check_batch_status # Add check_batch_status
+from .status_ops import get_latest_processing_status, check_batch_status
+from .llm_info import store_batch_llm_info, get_batch_llm_info
 
 # Define __all__ for explicit public API (optional but good practice)
 __all__ = [
@@ -52,12 +53,16 @@ __all__ = [
     'get_current_calendar_file',
     'count_unique_events_in_database',
     'get_processed_events_by_batch',
-
-    # Personnel operations
+    
+    # Personnel config operations
     'save_personnel_config_to_db',
     'load_personnel_config_from_db',
-
+    
     # Status operations
     'get_latest_processing_status',
-    'check_batch_status', # Add check_batch_status to __all__
+    'check_batch_status',
+    
+    # LLM info tracking
+    'store_batch_llm_info',
+    'get_batch_llm_info'
 ]

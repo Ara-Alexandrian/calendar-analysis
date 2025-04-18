@@ -60,12 +60,105 @@ if uploaded_file is not None:
             st.session_state.raw_df = raw_df
             st.success(f"Successfully loaded '{uploaded_file.name}'. Found {len(raw_df)} raw events.")
             st.dataframe(raw_df.head())
-            # Reset processing flags if a new file is uploaded
-            st.session_state.data_processed = False
-            st.session_state.preprocessed_df = None
-            st.session_state.llm_processed_df = None
-            st.session_state.normalized_df = None
-            st.session_state.analysis_ready_df = None
+              # Check if file was processed before (for Resume/Redo options)
+            is_duplicate_file = False
+            current_db_batch_id = None
+            
+            # Log database status for debugging
+            logger.info(f"DB_ENABLED in settings: {settings.DB_ENABLED}")
+            st.write(f"Database enabled: {'Yes' if settings.DB_ENABLED else 'No'}")
+            
+            # Try to check for previous processing
+            try:
+                if settings.DB_ENABLED:
+                    logger.info("Checking if file exists in database...")
+                    try:
+                        # Check if file exists in database
+                        success, current_db_batch_id, is_duplicate = db_manager.save_calendar_file_to_db(
+                            filename=st.session_state.uploaded_filename,
+                            file_content=file_content_bytes,
+                            check_only=True  # Only check, don't save yet
+                        )
+                        logger.info(f"Database check result: success={success}, batch_id={current_db_batch_id}, is_duplicate={is_duplicate}")
+                        
+                        if is_duplicate and current_db_batch_id:
+                            st.info(f"This file has been processed before (Batch ID: {current_db_batch_id}).")
+                            try:
+                                batch_status = db_manager.check_batch_status(current_db_batch_id)
+                                logger.info(f"Batch status: {batch_status}")
+                                if batch_status is not None:
+                                    total_in_batch = batch_status.get('total_events', 0)
+                                    processed_count = batch_status.get('extracted', 0) + batch_status.get('assigned', 0)
+                                    
+                                    # Show batch status
+                                    st.write("Current processing status:")
+                                    st.json(batch_status)
+                                    
+                                    # Try to get LLM info if available
+                                    try:
+                                        llm_info = db_manager.get_batch_llm_info(current_db_batch_id)
+                                        if llm_info:
+                                            st.info(f"Previous analysis used LLM provider: {llm_info.get('provider', 'Unknown')}, Model: {llm_info.get('model', 'Unknown')}")
+                                    except Exception as llm_info_err:
+                                        logger.error(f"Error getting LLM info: {llm_info_err}")
+                                        st.warning("Could not retrieve LLM information for this batch.")
+                                    
+                                    # Show Resume/Redo buttons
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        # Only enable Resume if partially processed
+                                        resume_disabled = not (0 < processed_count < total_in_batch or batch_status.get('error', 0) > 0)
+                                        resume_tooltip = "Continue processing from where you left off" if not resume_disabled else "No partial processing detected"
+                                        if st.button("📥 Resume Analysis", disabled=resume_disabled, help=resume_tooltip):
+                                            st.session_state.processing_mode = "Resume Processing"
+                                            st.session_state.current_batch_id = current_db_batch_id
+                                            st.session_state.processing_triggered = True
+                                    
+                                    with col2:
+                                        if st.button("🔄 Redo Analysis", help="Start fresh with current LLM settings"):
+                                            st.session_state.processing_mode = "Start Fresh"
+                                            st.session_state.current_batch_id = current_db_batch_id
+                                            st.session_state.processing_triggered = True
+                            except Exception as status_err:
+                                logger.error(f"Error checking batch status: {status_err}")
+                                st.error(f"Could not check batch status: {status_err}")
+                    except Exception as e:
+                        logger.error(f"Error checking file in database: {e}", exc_info=True)
+                        st.error(f"Database error: {e}")
+                else:
+                    # For testing: Show buttons even when DB is disabled
+                    st.warning("Database is disabled. Adding Resume/Redo buttons for testing.")
+                    
+                    # Create a temporary batch ID for testing
+                    temp_batch_id = f"temp_{hashlib.md5(file_content_bytes).hexdigest()[:8]}"
+                    
+                    # Add Resume/Redo buttons for testing
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("📥 Resume Analysis (Test)", help="This is a test button when DB is disabled"):
+                            st.session_state.processing_mode = "Resume Processing"
+                            st.session_state.current_batch_id = temp_batch_id
+                            st.session_state.processing_triggered = True
+                            st.success("Resume processing triggered!")
+                    
+                    with col2:
+                        if st.button("🔄 Redo Analysis (Test)", help="This is a test button when DB is disabled"):
+                            st.session_state.processing_mode = "Start Fresh"
+                            st.session_state.current_batch_id = temp_batch_id
+                            st.session_state.processing_triggered = True
+                            st.success("Redo processing triggered!")
+            except Exception as e:
+                logger.error(f"Unexpected error in file processing check: {e}", exc_info=True)
+                st.error(f"Error checking file status: {e}")
+            
+            # Reset processing flags if a new file is uploaded unless Resume/Redo was explicitly chosen
+            if not st.session_state.get('processing_triggered', False):
+                st.session_state.data_processed = False
+                st.session_state.preprocessed_df = None
+                st.session_state.llm_processed_df = None
+                st.session_state.normalized_df = None
+                st.session_state.analysis_ready_df = None
+                st.session_state.processing_mode = "Start Fresh"  # Default for new uploads
         else:
             st.error(f"Failed to load or parse '{uploaded_file.name}'. Check file format and logs.")
             st.session_state.raw_df = None # Clear invalid data
@@ -163,6 +256,22 @@ if st.session_state.get('raw_df') is not None:
                                 st.session_state.current_batch_id = batch_id # Store the batch_id from DB save
                                 current_db_batch_id = batch_id # Also store locally for immediate use
                                 is_duplicate_file = is_duplicate # Store duplicate status locally
+                                
+                                # Save LLM provider information regardless of processing mode
+                                if settings.LLM_PROVIDER and settings.LLM_PROVIDER.lower() != 'none':
+                                    llm_info = {
+                                        'base_url': settings.OLLAMA_BASE_URL if hasattr(settings, 'OLLAMA_BASE_URL') else None,
+                                        'temperature': settings.LLM_TEMPERATURE if hasattr(settings, 'LLM_TEMPERATURE') else 0.7,
+                                        'max_tokens': settings.LLM_MAX_TOKENS if hasattr(settings, 'LLM_MAX_TOKENS') else 1024
+                                    }
+                                    db_manager.store_batch_llm_info(
+                                        batch_id=batch_id,
+                                        provider=settings.LLM_PROVIDER,
+                                        model=settings.LLM_MODEL,
+                                        params=llm_info
+                                    )
+                                    logger.info(f"Stored LLM info for batch {batch_id}: {settings.LLM_PROVIDER}/{settings.LLM_MODEL}")
+                                
                                 if not is_duplicate:
                                     st.info(f"New file '{st.session_state.uploaded_filename}' registered with Batch ID: {batch_id}")
                                     st.session_state.processing_mode = "Start Fresh" # Always start fresh for new files
@@ -177,14 +286,18 @@ if st.session_state.get('raw_df') is not None:
                             # Assign a temporary batch ID if DB save fails
                             import uuid
                             st.session_state.current_batch_id = f"temp_batch_{uuid.uuid4().hex[:8]}"
-                            current_db_batch_id = st.session_state.current_batch_id # Ensure local var is set
-
-                    # --- Resume/Start Fresh Logic (Now inside button press, after DB check) ---
-                    # Initialize processing_mode if it doesn't exist or if it's a new file
-                    if 'processing_mode' not in st.session_state or not is_duplicate_file:
+                            current_db_batch_id = st.session_state.current_batch_id # Ensure local var is set                    # --- Resume/Start Fresh Logic (Now inside button press, after DB check) ---
+                    # Check if processing was triggered by Resume/Redo buttons
+                    if st.session_state.get('processing_triggered', False):
+                        logger.info(f"Processing triggered by button: {st.session_state.processing_mode}")
+                        # Clear the triggered flag after acknowledging it
+                        st.session_state.processing_triggered = False
+                    # Otherwise, initialize processing_mode if it doesn't exist or if it's a new file
+                    elif 'processing_mode' not in st.session_state or not is_duplicate_file:
                         st.session_state.processing_mode = "Start Fresh"
-
-                    if is_duplicate_file and current_db_batch_id:
+                    
+                    # If we're not triggered by a button and it's a duplicate file, we might need to offer a choice
+                    if not st.session_state.get('processing_triggered', False) and is_duplicate_file and current_db_batch_id:
                         st.warning(f"This file (Batch ID: {current_db_batch_id}) seems to have been processed before.")
                         batch_status = db_manager.check_batch_status(current_db_batch_id)
                         if batch_status is None:
