@@ -28,7 +28,7 @@ from .personnel_ops import (
     save_personnel_config_to_db,
     load_personnel_config_from_db
 )
-from .status_ops import get_latest_processing_status
+from .status_ops import get_latest_processing_status, check_batch_status # Add check_batch_status
 
 # Define __all__ for explicit public API (optional but good practice)
 __all__ = [
@@ -59,4 +59,5 @@ __all__ = [
 
     # Status operations
     'get_latest_processing_status',
+    'check_batch_status', # Add check_batch_status to __all__
 ]

@@ -7,6 +7,55 @@ from .connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
+def check_batch_status(batch_id):
+    """
+    Get detailed status counts for a specific batch.
+
+    Args:
+        batch_id (str): The batch ID to check.
+
+    Returns:
+        dict: Status counts for the batch.
+    """
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Database connection failed in check_batch_status.")
+        return None
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(sql.SQL("""
+                SELECT processing_status, COUNT(*) as count
+                FROM {} WHERE batch_id = %s
+                GROUP BY processing_status
+            """).format(sql.Identifier(settings.DB_TABLE_PROCESSED_DATA)), (batch_id,))
+            
+            results = cursor.fetchall()
+            if not results:
+                logger.warning(f"No status counts found for batch {batch_id}")
+                return None
+
+            status_counts = {status: count for status, count in results}
+            total = sum(status_counts.values())
+            
+            return {
+                'total_events': total,
+                'processing': status_counts.get('processing', 0),
+                'extracted': status_counts.get('extracted', 0),
+                'assigned': status_counts.get('assigned', 0),
+                'error': status_counts.get('error', 0)
+            }
+
+    except psycopg2.Error as e:
+        logger.error(f"Database error in check_batch_status: {e}", exc_info=True)
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error in check_batch_status: {e}", exc_info=True)
+        return None
+    finally:
+        if conn:
+            conn.close()
+
 def get_latest_processing_status(batch_id=None):
     """
     Get the status of the latest processing batch or a specific batch.

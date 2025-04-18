@@ -43,11 +43,17 @@ except Exception as e:
     st.warning("Using default settings due to import error. Some features may be limited.")
 
 # Configure logging
+# Configure logging
+# Ensure the output directory exists
+log_dir = os.path.dirname(settings.LOG_FILE)
+if log_dir and not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
 logging.basicConfig(
     level=settings.LOGGING_LEVEL,
     format=settings.LOG_FORMAT,
     handlers=[
-        logging.FileHandler(settings.LOG_FILE),
+        logging.FileHandler(settings.LOG_FILE, encoding='utf-8'), # Explicitly set UTF-8 encoding
         logging.StreamHandler()
     ]
 )

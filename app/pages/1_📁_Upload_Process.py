@@ -7,6 +7,7 @@ import pandas as pd
 import logging
 import time
 import importlib
+import json # Added for json.dumps
 
 # Ensure project root is in path (if running page directly)
 import sys, os
@@ -148,7 +149,9 @@ if st.session_state.get('raw_df') is not None:
                             st.write("Database schema verified.")
                     # ------------------------------------------------
 
-                    # 0. Save Calendar File Info to DB (if enabled) - Moved here
+                    # 0. Save Calendar File Info to DB (if enabled) and check for duplicates
+                    is_duplicate_file = False # Default
+                    current_db_batch_id = None # Default
                     if settings.DB_ENABLED:
                         st.write("Registering uploaded file in database...")
                         try:
@@ -158,10 +161,11 @@ if st.session_state.get('raw_df') is not None:
                             )
                             if success:
                                 st.session_state.current_batch_id = batch_id # Store the batch_id from DB save
-                                if is_duplicate:
-                                    st.info(f"File '{st.session_state.uploaded_filename}' has been processed before (Batch ID: {batch_id}). Re-processing.")
-                                else:
-                                    st.info(f"File '{st.session_state.uploaded_filename}' registered with Batch ID: {batch_id}")
+                                current_db_batch_id = batch_id # Also store locally for immediate use
+                                is_duplicate_file = is_duplicate # Store duplicate status locally
+                                if not is_duplicate:
+                                    st.info(f"New file '{st.session_state.uploaded_filename}' registered with Batch ID: {batch_id}")
+                                    st.session_state.processing_mode = "Start Fresh" # Always start fresh for new files
                             else:
                                 st.error("Failed to register file in database. Processing will continue but might lack DB tracking.")
                                 # Assign a temporary batch ID if DB save fails
@@ -173,6 +177,47 @@ if st.session_state.get('raw_df') is not None:
                             # Assign a temporary batch ID if DB save fails
                             import uuid
                             st.session_state.current_batch_id = f"temp_batch_{uuid.uuid4().hex[:8]}"
+                            current_db_batch_id = st.session_state.current_batch_id # Ensure local var is set
+
+                    # --- Resume/Start Fresh Logic (Now inside button press, after DB check) ---
+                    # Initialize processing_mode if it doesn't exist or if it's a new file
+                    if 'processing_mode' not in st.session_state or not is_duplicate_file:
+                        st.session_state.processing_mode = "Start Fresh"
+
+                    if is_duplicate_file and current_db_batch_id:
+                        st.warning(f"This file (Batch ID: {current_db_batch_id}) seems to have been processed before.")
+                        batch_status = db_manager.check_batch_status(current_db_batch_id)
+                        if batch_status is None:
+                            st.error("Failed to retrieve batch status. Defaulting to Start Fresh.")
+                            st.session_state.processing_mode = "Start Fresh"
+                        else:
+                            total_in_batch = batch_status.get('total_events', 0)
+                            if total_in_batch > 0:
+                                st.write(f"Status for Batch {current_db_batch_id}:")
+                                st.json(batch_status) # Show the status counts
+
+                                processed_count = batch_status.get('extracted', 0) + batch_status.get('assigned', 0)
+                                # Offer choice only if partially processed (excluding errors from partial check)
+                                if 0 < total_in_batch and (processed_count < total_in_batch or batch_status.get('error', 0) == total_in_batch):
+                                    # Use a container to hold the radio button
+                                    choice_container = st.container()
+                                    with choice_container:
+                                        processing_mode_choice = st.radio(
+                                            "Choose processing mode:",
+                                            ("Resume Processing", "Start Fresh (Reprocess All)"),
+                                            key="resume_radio",
+                                            index=0 if st.session_state.processing_mode == "Resume Processing" else 1, # Default based on session state
+                                            help="Resume: Process only events not yet processed. Start Fresh: Reprocess all events."
+                                        )
+                                        st.session_state.processing_mode = processing_mode_choice # Update session state immediately
+                                elif total_in_batch > 0: # If total > 0 and the above condition is false, it means processing is complete
+                                    st.info("Previous processing appears complete. Defaulting to Start Fresh.")
+                                    st.session_state.processing_mode = "Start Fresh"
+                            else: # Corresponds to 'if total_in_batch > 0'
+                                st.info("No previous processing data found for this batch. Starting fresh.")
+                                st.session_state.processing_mode = "Start Fresh"
+
+                    logger.info(f"Processing Mode selected: {st.session_state.processing_mode}") # Log the selected mode
 
                     # 1. Preprocess Data
                     st.write("Step 1: Preprocessing data (dates, duration)...")
@@ -194,7 +239,7 @@ if st.session_state.get('raw_df') is not None:
                             llm_client = get_ollama_client() # Get the client
                             if not llm_client:
                                 raise Exception("Failed to get LLM Client.")
-                            
+
                             summaries = preprocessed_df['summary'].tolist()
                             canonical_names_list = st.session_state.get('canonical_names', [])
                             personnel_results = [] # List for personnel names
@@ -302,6 +347,14 @@ if st.session_state.get('raw_df') is not None:
 
 
                             st.session_state.llm_processed_df = llm_processed_df # Store the potentially DB-loaded df
+
+                            # --- DEBUG: Inspect DataFrame after LLM extraction ---
+                            if llm_processed_df is not None and not llm_processed_df.empty:
+                                logger.info(f"DataFrame columns after LLM extraction step: {llm_processed_df.columns.tolist()}")
+                                logger.info(f"First 5 rows of 'extracted_event_type' after LLM:\n{llm_processed_df['extracted_event_type'].head().to_string()}")
+                            else:
+                                logger.warning("llm_processed_df is None or empty after LLM extraction step.")
+                            # --- END DEBUG ---
 
                             st.success(f"Simplified LLM extraction finished. Errors: {extraction_errors}")
                             logger.info(f"Simplified LLM extraction complete. Errors: {extraction_errors}")

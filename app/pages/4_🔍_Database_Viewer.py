@@ -13,7 +13,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from functions import db_manager
+from functions import db as db_manager # Corrected import
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ if not settings.DB_ENABLED:
 conn = db_manager.get_db_connection()
 if not conn:
     st.error("Unable to connect to the PostgreSQL database. Please check your connection settings and make sure the database server is running.")
-    
+
     # Show the current settings
     st.subheader("Current Database Settings")
     st.code(f"""
@@ -43,7 +43,7 @@ if not conn:
     DB_TABLE_PROCESSED_DATA = "{settings.DB_TABLE_PROCESSED_DATA}"
     DB_TABLE_PERSONNEL = "{settings.DB_TABLE_PERSONNEL}"
     """)
-    
+
     st.subheader("Troubleshooting Tips")
     st.markdown("""
     1. Make sure the PostgreSQL server is running at the specified host and port
@@ -51,37 +51,37 @@ if not conn:
     3. Check for any special characters in the password that might need escaping
     4. Ensure the psycopg2-binary package is installed (`pip install psycopg2-binary`)
     """)
-    
+
     # Add a button to create the database if it doesn't exist
     if st.button("Create Database"):
         try:
             # Connect to the default 'postgres' database to create our application database
             import psycopg2
-            conn = psycopg2.connect(
+            conn_create = psycopg2.connect(
                 host=settings.DB_HOST,
                 port=settings.DB_PORT,
                 database="postgres",  # Connect to default DB
                 user=settings.DB_USER,
                 password=settings.DB_PASSWORD
             )
-            conn.autocommit = True  # Required for CREATE DATABASE
-            
-            with conn.cursor() as cursor:
+            conn_create.autocommit = True  # Required for CREATE DATABASE
+
+            with conn_create.cursor() as cursor:
                 # Check if database already exists
                 cursor.execute(f"SELECT 1 FROM pg_database WHERE datname = '{settings.DB_NAME}'")
                 exists = cursor.fetchone()
-                
+
                 if not exists:
                     # Create the database
                     cursor.execute(f"CREATE DATABASE {settings.DB_NAME}")
                     st.success(f"Database '{settings.DB_NAME}' created successfully! Please refresh the page.")
                 else:
                     st.info(f"Database '{settings.DB_NAME}' already exists.")
-            
-            conn.close()
+
+            conn_create.close()
         except Exception as e:
             st.error(f"Failed to create database: {e}")
-    
+
     # Add a button to install psycopg2 if it's not already installed
     if st.button("Install Required Packages"):
         st.info("Installing psycopg2-binary and other required packages...")
@@ -90,7 +90,7 @@ if not conn:
             st.success("Packages installed successfully! Please restart the application.")
         else:
             st.error("Failed to install packages. Please install manually: 'pip install psycopg2-binary'")
-    
+
     st.stop()
 
 # Create SQLAlchemy engine for pandas operations
@@ -109,8 +109,8 @@ def get_all_tables():
     try:
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
+                SELECT table_name
+                FROM information_schema.tables
                 WHERE table_schema = 'public'
                 ORDER BY table_name
             """)
@@ -140,7 +140,7 @@ def get_table_columns(table_name):
 def count_table_rows(table_name):
     try:
         with conn.cursor() as cursor:
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}") # Use f-string carefully, table name is validated
             count = cursor.fetchone()[0]
             return count
     except Exception as e:
@@ -169,11 +169,11 @@ def execute_custom_query(query, params=None):
 # Function to fetch table data with pagination
 def get_table_data(table_name, limit=100, offset=0, where_clause=""):
     try:
-        query = f"SELECT * FROM {table_name}"
+        query = f"SELECT * FROM {table_name}" # Use f-string carefully, table name is validated
         if where_clause:
-            query += f" WHERE {where_clause}"
+            query += f" WHERE {where_clause}" # Use f-string carefully, column name is validated
         query += f" LIMIT {limit} OFFSET {offset}"
-        
+
         if engine is not None:
             # Use SQLAlchemy engine if available
             df = pd.read_sql_query(query, engine)
@@ -190,7 +190,7 @@ tables = get_all_tables()
 
 if not tables:
     st.warning("No tables found in the database. You may need to upload and process data first.")
-    
+
     # Button to ensure tables exist
     if st.button("Create database tables"):
         success = db_manager.ensure_tables_exist()
@@ -204,29 +204,29 @@ else:
     st.subheader("Database Information")
     st.info(f"Connected to PostgreSQL database '{settings.DB_NAME}' at {settings.DB_HOST}:{settings.DB_PORT} as user '{settings.DB_USER}'")
     st.success(f"Found {len(tables)} tables in the database")
-    
+
     # Create tabs for different views
     tab1, tab2, tab3 = st.tabs(["Table Explorer", "Custom Query", "Status Dashboard"])
-    
+
     with tab1:
         # Table selector
         selected_table = st.selectbox("Select Table", tables)
-        
+
         if selected_table:
             # Table information
             row_count = count_table_rows(selected_table)
             st.info(f"Table '{selected_table}' contains {row_count} rows")
-            
+
             # Show table schema
             st.subheader("Table Schema")
             columns = get_table_columns(selected_table)
             if columns:
                 schema_df = pd.DataFrame(columns, columns=["Column", "Data Type", "Nullable"])
                 st.dataframe(schema_df)
-            
+
             # Data pagination controls
             st.subheader("Table Data")
-            
+
             col1, col2, col3 = st.columns([1, 1, 1])
             with col1:
                 page_size = st.selectbox("Rows per page", [10, 25, 50, 100], index=1)
@@ -236,16 +236,17 @@ else:
             with col3:
                 # Optional simple filter
                 filter_column = st.selectbox("Filter by column", ["None"] + [col[0] for col in columns])
-            
+
             if filter_column != "None":
                 filter_value = st.text_input("Filter value (exact match)")
+                # Basic validation/escaping might be needed here for security if values can contain quotes
                 where_clause = f"{filter_column} = '{filter_value}'" if filter_value else ""
             else:
                 where_clause = ""
-            
+
             # Fetch and display data
             table_data = get_table_data(selected_table, limit=page_size, offset=offset, where_clause=where_clause)
-            
+
             # Handle special column formatting
             for col in table_data.columns:
                 # Format JSONB columns for better display
@@ -257,9 +258,9 @@ else:
                         )
                     except:
                         pass
-            
+
             st.dataframe(table_data, use_container_width=True)
-            
+
             # Download button for the table data
             csv_data = table_data.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -268,39 +269,40 @@ else:
                 file_name=f"{selected_table}_data.csv",
                 mime="text/csv"
             )
-            
+
             # Pagination controls
             st.caption(f"Showing rows {offset+1} to {min(offset+page_size, row_count)} of {row_count}")
-            
+
             if row_count > page_size:
-                col1, col2 = st.columns(2)
-                with col1:
+                col1_page, col2_page = st.columns(2)
+                with col1_page:
                     if st.button("Previous Page", disabled=(page_number <= 1)):
-                        page_number -= 1
-                with col2:
+                        # This needs state management to work correctly across reruns
+                        st.warning("Pagination buttons require state management (not fully implemented here).")
+                with col2_page:
                     if st.button("Next Page", disabled=(offset + page_size >= row_count)):
-                        page_number += 1
-    
+                        st.warning("Pagination buttons require state management (not fully implemented here).")
+
     with tab2:
         st.subheader("Custom SQL Query")
         st.warning("Be careful with custom queries - avoid modifying data unless you know what you're doing")
-        
-        query = st.text_area("SQL Query", height=150, 
+
+        query = st.text_area("SQL Query", height=150,
                             placeholder="Example: SELECT * FROM processed_events WHERE start_time > '2023-01-01' LIMIT 100")
-        
-        col1, col2 = st.columns([1, 3])
-        with col1:
+
+        col1_query, col2_query = st.columns([1, 3])
+        with col1_query:
             execute = st.button("Execute Query")
-        with col2:
+        with col2_query:
             st.markdown("**Tables**: " + ", ".join(tables))
-        
+
         if execute and query:
             st.subheader("Query Results")
             results = execute_custom_query(query)
-            
+
             if not results.empty:
                 st.dataframe(results, use_container_width=True)
-                
+
                 # Download results
                 csv_results = results.to_csv(index=False).encode('utf-8')
                 st.download_button(
@@ -311,27 +313,27 @@ else:
                 )
             else:
                 st.info("Query returned no results")
-    
+
     with tab3:
         st.subheader("Database Status Dashboard")
-        
+
         # Table statistics
         st.markdown("### Table Statistics")
         stats_data = []
         for table in tables:
             row_count = count_table_rows(table)
             stats_data.append({"Table": table, "Row Count": row_count})
-        
+
         stats_df = pd.DataFrame(stats_data)
         st.dataframe(stats_df, use_container_width=True)
-        
+
         # Processing Status
         st.markdown("### Processing Status")
-        
+
         # Get all batch IDs for processed data
         try:
             batch_stats = execute_custom_query(f"""
-                SELECT batch_id, COUNT(*) as event_count, 
+                SELECT batch_id, COUNT(*) as event_count,
                        MIN(processing_date) as start_date,
                        MAX(processing_date) as end_date
                 FROM {settings.DB_TABLE_PROCESSED_DATA}
@@ -339,29 +341,29 @@ else:
                 GROUP BY batch_id
                 ORDER BY MAX(processing_date) DESC
             """)
-            
+
             if not batch_stats.empty:
                 st.dataframe(batch_stats, use_container_width=True)
-                
+
                 # For each batch, show processing status
-                selected_batch = st.selectbox("Select Batch for Details", 
+                selected_batch = st.selectbox("Select Batch for Details",
                                          batch_stats['batch_id'].tolist())
-                
+
                 if selected_batch:
                     # Get processing status by batch ID
                     status = db_manager.get_latest_processing_status(selected_batch)
-                    
+
                     # Display status information
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
+                    col1_status, col2_status, col3_status = st.columns(3)
+                    with col1_status:
                         st.metric("Status", status['status'].upper())
-                    with col2:
+                    with col2_status:
                         st.metric("Completion", f"{status['pct_complete']:.1f}%")
-                    with col3:
+                    with col3_status:
                         st.metric("Events", status['total'])
-                    
+
                     st.markdown(f"**Message**: {status['message']}")
-                    
+
                     # Show detailed status by processing_status
                     status_query = f"""
                         SELECT processing_status, COUNT(*) as count
@@ -377,10 +379,10 @@ else:
                         st.dataframe(status_df)
             else:
                 st.info("No batch processing data found")
-                
+
         except Exception as e:
             st.error(f"Error fetching batch statistics: {e}")
-            
+
         # Calendar Files
         st.markdown("### Calendar Files")
         try:
@@ -389,38 +391,38 @@ else:
                 FROM calendar_files
                 ORDER BY upload_date DESC
             """)
-            
+
             if not calendar_files.empty:
                 st.dataframe(calendar_files)
             else:
                 st.info("No calendar files found in the database")
         except Exception as e:
             st.error(f"Error fetching calendar files: {e}")
-            
+
         # Admin Actions Section
         st.markdown("---")
         st.markdown("### Admin Actions")
-        
+
         # Initialize session state for confirmation
         if 'confirm_clear_db' not in st.session_state:
             st.session_state.confirm_clear_db = False
-            
+
         clear_db_button = st.button("Clear Processed Event Data", type="secondary")
-        
+
         if clear_db_button:
             st.session_state.confirm_clear_db = True
-            
+
         if st.session_state.confirm_clear_db:
             st.warning("⚠️ **Are you sure you want to clear all processed event data?** This action cannot be undone.")
-            
+
             col_confirm, col_cancel = st.columns(2)
             with col_confirm:
                 if st.button("Yes, Clear Database", type="primary"):
                     st.session_state.confirm_clear_db = False # Reset confirmation state
-                    
+
                     # Call the function to clear the database
                     success = db_manager.clear_database_tables()
-                    
+
                     if success:
                         st.success("Database tables cleared successfully!")
                         st.rerun() # Rerun the page to reflect changes
