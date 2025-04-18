@@ -408,9 +408,17 @@ def get_processed_events(start_date=None, end_date=None, personnel=None, limit=1
     # Engine connection is managed by pandas/SQLAlchemy, no explicit close needed here
 
 
-def save_calendar_file_to_db(filename, file_content):
+def save_calendar_file_to_db(filename, file_content, check_only=False):
     """
     Saves a calendar JSON file to the database, keeping only one file as "current".
+    
+    Args:
+        filename: The name of the calendar file
+        file_content: The content of the file (string or bytes)
+        check_only: If True, only check if file exists but don't save it
+        
+    Returns:
+        tuple: (success, batch_id, is_duplicate)
     """
     conn = get_db_connection()
     if not conn:
@@ -441,6 +449,10 @@ def save_calendar_file_to_db(filename, file_content):
             existing_batch_id, _ = existing
             logger.info(f"Duplicate calendar file detected with hash {file_hash[:10]}... Batch ID: {existing_batch_id}")
             return True, existing_batch_id, True
+            
+        # If we're only checking and not saving, return here
+        if check_only:
+            return False, None, False
 
         try:
             json_content = json.loads(content_str)
