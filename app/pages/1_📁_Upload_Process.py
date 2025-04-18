@@ -102,13 +102,37 @@ if uploaded_file is not None:
                                     except Exception as llm_info_err:
                                         logger.error(f"Error getting LLM info: {llm_info_err}")
                                         st.warning("Could not retrieve LLM information for this batch.")
-                                    
-                                    # Show Resume/Redo buttons
+                                          # Show Resume/Redo buttons
                                     col1, col2 = st.columns(2)
                                     with col1:
-                                        # Only enable Resume if partially processed
-                                        resume_disabled = not (0 < processed_count < total_in_batch or batch_status.get('error', 0) > 0)
-                                        resume_tooltip = "Continue processing from where you left off" if not resume_disabled else "No partial processing detected"
+                                        # Enable resume if:
+                                        # - We have extracted events but not all are assigned, or
+                                        # - We have errors
+                                        # - Or we're in the middle of processing
+                                        extracted_count = batch_status.get('extracted', 0)
+                                        assigned_count = batch_status.get('assigned', 0)
+                                        error_count = batch_status.get('error', 0)
+                                        processing_count = batch_status.get('processing', 0)
+                                        
+                                        # Events are extracted but not all are assigned
+                                        needs_assignment = extracted_count > 0 and assigned_count < total_in_batch
+                                        # Or there are errors
+                                        has_errors = error_count > 0
+                                        # Or there's active processing
+                                        is_processing = processing_count > 0
+                                        
+                                        resume_disabled = not (needs_assignment or has_errors or is_processing)
+                                        
+                                        if resume_disabled:
+                                            if extracted_count == total_in_batch and assigned_count == 0:
+                                                # Special case: All events extracted but none assigned
+                                                resume_tooltip = "Resume to complete normalization and assignment phase"
+                                                resume_disabled = False
+                                            else:
+                                                resume_tooltip = "No partial processing detected"
+                                        else:
+                                            resume_tooltip = "Continue processing from where you left off"
+                                        
                                         if st.button("📥 Resume Analysis", disabled=resume_disabled, help=resume_tooltip):
                                             st.session_state.processing_mode = "Resume Processing"
                                             st.session_state.current_batch_id = current_db_batch_id
