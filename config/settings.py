@@ -134,8 +134,8 @@ EVENT_TYPE_MAPPING = {
     "wh ct/rtp hdr cyl": "WH CT/RTP HDR CYL",
     "ham 4d ct rtp": "Ham 4D CT RTP",
     "gon 4d rtp bh": "GON 4D RTP BH",
-    "wh hdr cyl 4d": "WH HDR CYL 4D",
-    "br sbrt": "BR SBRT",
+    "wh hdr cyl 4d": "WH HDR CYL 4D",    "br sbrt": "BR SBRT",
+    "gk framed tx": "GK Framed Tx", # Added variation of "Framed GK Tx"
     "unknown": "Unknown", # Ensure Unknown maps to Unknown
 }
 
