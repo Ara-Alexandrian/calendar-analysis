@@ -4,7 +4,8 @@
         "clinical_pct": 0.8,
         "variations": [
             "A. Alexandrian",
-            "Alexandrian"
+            "Alexandrian",
+            "AA"
         ]
     },
     "D. Perrin": {
@@ -12,7 +13,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "D. Perrin",
-            "Perrin"
+            "Perrin",
+            "DP"
         ]
     },
     "D. Neck": {
@@ -20,7 +22,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "D. Neck",
-            "Neck"
+            "Neck",
+            "DN"
         ]
     },
     "D. Solis": {
@@ -28,7 +31,8 @@
         "clinical_pct": 0.8,
         "variations": [
             "D. Solis",
-            "Solis"
+            "Solis",
+            "DS"
         ]
     },
     "C. Chu": {
@@ -36,7 +40,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "C. Chu",
-            "Chu"
+            "Chu",
+            "CC"
         ]
     },
     "B. Smith": {
@@ -44,7 +49,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "B. Smith",
-            "Smith"
+            "Smith",
+            "BS"
         ]
     },
     "A. McGuffey": {
@@ -52,7 +58,8 @@
         "clinical_pct": 0.8,
         "variations": [
             "A. McGuffey",
-            "McGuffey"
+            "McGuffey",
+            "AM"
         ]
     },
     "E. Chorniak": {
@@ -60,7 +67,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "E. Chorniak",
-            "Chorniak"
+            "Chorniak",
+            "EC"
         ]
     },
     "G. Pitcher": {
@@ -68,7 +76,8 @@
         "clinical_pct": 0.5,
         "variations": [
             "G. Pitcher",
-            "Pitcher"
+            "Pitcher",
+            "GP"
         ]
     },
     "S. Stathakis": {
@@ -76,7 +85,8 @@
         "clinical_pct": 0.4,
         "variations": [
             "S. Stathakis",
-            "Stathakis"
+            "Stathakis",
+            "SS"
         ]
     },
     "C. Schneider": {
@@ -84,7 +94,8 @@
         "clinical_pct": 0.8,
         "variations": [
             "C. Schneider",
-            "Schneider"
+            "Schneider",
+            "CS"
         ]
     },
     "R. Guidry": {
@@ -92,7 +103,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "R. Guidry",
-            "Guidry"
+            "Guidry",
+            "RG"
         ]
     },
     "J. Voss": {
@@ -100,7 +112,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "J. Voss",
-            "Voss"
+            "Voss",
+            "JV"
         ]
     },
     "A. Husain": {
@@ -108,7 +121,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "A. Husain",
-            "Husain"
+            "Husain",
+            "AH"
         ]
     },
     "J. Chen": {
@@ -116,7 +130,8 @@
         "clinical_pct": 0.95,
         "variations": [
             "J. Chen",
-            "Chen"
+            "Chen",
+            "JC"
         ]
     },
     "Wood": {
@@ -197,7 +212,8 @@
         "clinical_pct": 0.0,
         "variations": [
             "G. Debevec",
-            "Debevec"
+            "Debevec",
+            "GD"
         ]
     },
     "T. Hagan": {
@@ -205,7 +221,8 @@
         "clinical_pct": 0.0,
         "variations": [
             "T. Hagan",
-            "Hagan"
+            "Hagan",
+            "TH"
         ]
     },
     "A. Stam": {
@@ -213,7 +230,8 @@
         "clinical_pct": 0.0,
         "variations": [
             "A. Stam",
-            "Stam"
+            "Stam",
+            "AS"
         ]
     }
 }

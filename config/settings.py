@@ -53,90 +53,103 @@ PLOT_X_LABEL_EVENTS = os.environ.get("PLOT_X_LABEL_EVENTS", "Number of Events")
 # Dictionary to map raw extracted event types (lowercase) to standardized names
 # Based *only* on the comprehensive list provided to the LLM prompt.
 EVENT_TYPE_MAPPING = {
-    "barrigel": "Barrigel",
-    "barrigel olol or": "Barrigel OLOL OR",
-    "br 4d": "BR 4D",
-    "br 4d bh": "BR 4D BH",
-    "br 4d poss bh": "BR 4D poss BH",
-    "br 4d rtp": "BR 4D RTP",
-    "br 4d rtp bh": "BR 4D RTP BH",
-    "br bh": "BR BH",
-    "br bh 4d": "BR BH 4D",
-    "br gk sim": "BR GK SIM",
-    "br rtp 4d": "BR RTP 4D",
-    "br rtp unity": "BR RTP UNITY",
-    "br seed implant": "BR Seed Implant",
-    "br unity ct": "BR UNITY CT",
-    "br unity rtp": "BR UNITY RTP",
-    "br unity rtp 4d": "BR UNITY RTP 4D",
-    "br volume study": "BR Volume Study",
-    "br2 sbrt": "BR2 SBRT",
-    "br3 sbrt": "BR3 SBRT",
-    "brg seed implant": "BRG SEED IMPLANT",
-    "cc chart rounds": "CC Chart Rounds",
-    "cov 4d": "COV 4D",
-    "cov bh": "COV BH",
-    "cov hdr": "COV HDR",
-    "cov hdr t&r": "COV HDR T&R",
-    "cov rtp bh": "COV RTP BH",
-    "cov sbrt": "COV SBRT",
-    "cv1 sbrt": "CV1 SBRT",
-    "cv2 sbrt": "CV2 SBRT",
-    "framed gk tx": "Framed GK Tx",
-    "gk mri": "GK MRI",
-    "gk remote plan review": "GK Remote Plan Review",
-    "gk sim": "GK SIM",
-    "gk sim/tx": "GK SIM/Tx",
-    "gk sbrt tx": "GK SBRT Tx",
-    "gk tx": "GK Tx",
-    "gk tx sbrt": "GK Tx SBRT",
-    "gon 4d": "GON 4D",
-    "gon bh": "GON BH",
-    "gon pluvicto": "GON Pluvicto",
-    "gon sbrt": "GON SBRT",
-    "gon xofigo": "GON Xofigo",
-    "ham 4d": "HAM 4D", # Using HAM consistently
-    "ham 4d rtp": "HAM 4D RTP",
-    "ham 4d poss bh": "Ham 4D poss BH", # Keeping original casing as provided
-    "ham bh": "Ham BH",
-    "ham sbrt": "Ham SBRT",
-    "hammond sbrt": "Hammond SBRT",
-    "hou 4d": "HOU 4D",
-    "hou bh": "HOU BH",
-    "hou bh 4d": "HOU BH 4D",
-    "hou sbrt": "HOU SBRT",
-    "post gk": "Post GK",
-    "post gk mri": "Post GK MRI",
-    "resident's mr-in-radiotherapy workshop": "Resident's MR-in-Radiotherapy Workshop",
-    "seed implant": "Seed Implant",
-    "spaceoar classic": "SpaceOAR Classic",
-    "spaceoar vue": "SpaceOAR Vue",
-    "wh bh": "WH BH",
-    "wh breast compression": "WH Breast Compression",
-    "wh ct/rtp hdr": "WH CT/RTP HDR",
-    "wh hdr": "WH HDR",
-    "wh hdr cyl": "WH HDR CYL",
-    "wh hdr rtp cyl": "WH HDR RTP CYL",    "wh hdr t&o": "WH HDR T&O",
-    "wh rtp bh": "WH RTP BH",
-    "wh sbrt": "WH SBRT",
-    "cs unity": "CS UNITY",
-    "cs/ss unity": "CS/SS UNITY",
-    "dn unity": "DN UNITY",
-    "jv unity": "JV UNITY",
-    # "jv unity" (lowercase variation) maps to "JV UNITY"
-    "ss unity": "SS UNITY",
-    "ss/cs unity": "SS/CS Unity",
-    "ss/dn unity": "SS/DN UNITY",
-    "gk mri": "GK MRI", # Added missing event type
-    # New event types added to match extractor.py
-    "br rtp sbrt bh": "BR RTP SBRT BH",
-    "br rtp bh": "BR RTP BH", 
-    "wh ct/rtp hdr cyl": "WH CT/RTP HDR CYL",
-    "ham 4d ct rtp": "Ham 4D CT RTP",
-    "gon 4d rtp bh": "GON 4D RTP BH",
-    "wh hdr cyl 4d": "WH HDR CYL 4D",    "br sbrt": "BR SBRT",
-    "gk framed tx": "GK Framed Tx", # Added variation of "Framed GK Tx"
-    "unknown": "Unknown", # Ensure Unknown maps to Unknown
+    "barrigel": "Barrigel",
+    "barrigel olol or": "Barrigel OLOL OR",
+    "br 4d": "BR 4D",
+    "br 4d bh": "BR 4D BH",
+    "br 4d poss bh": "BR 4D poss BH",
+    "br 4d rtp": "BR 4D RTP",
+    "br 4d rtp bh": "BR 4D RTP BH",
+    "br bh": "BR BH",
+    "br bh 4d": "BR BH 4D",
+    "br gk sim": "BR GK SIM",
+    "br rtp 4d": "BR RTP 4D",
+    "br rtp unity": "Unity Coverage", # Mapped to Unity Coverage
+    "br seed implant": "BR Seed Implant",
+    "br unity ct": "Unity Coverage", # Mapped to Unity Coverage
+    "br unity rtp": "Unity Coverage", # Mapped to Unity Coverage
+    "br unity rtp 4d": "Unity Coverage", # Mapped to Unity Coverage
+    "br volume study": "BR Volume Study",
+    "br2 sbrt": "BR2 SBRT",
+    "br3 sbrt": "BR3 SBRT",
+    "brg seed implant": "BRG SEED IMPLANT",
+    "cc chart rounds": "CC Chart Rounds",
+    "cov 4d": "COV 4D",
+    "cov bh": "COV BH",
+    "cov hdr": "COV HDR",
+    "cov hdr t&r": "COV HDR T&R",
+    "cov rtp bh": "COV RTP BH",
+    "cov sbrt": "COV SBRT",
+    "cv1 sbrt": "CV1 SBRT",
+    "cv2 sbrt": "CV2 SBRT",
+    "framed gk tx": "Framed GK Tx",
+    "gk mri": "GK MRI",
+    "gk remote plan review": "GK Remote Plan Review",
+    "gk sim": "GK SIM",
+    "gk sim/tx": "GK SIM/Tx",
+    "gk sbrt tx": "GK SBRT Tx",
+    "gk tx": "GK Tx",
+    "gk tx sbrt": "GK Tx SBRT",
+    "gon 4d": "GON 4D",
+    "gon bh": "GON BH",
+    "gon pluvicto": "GON Pluvicto",
+    "gon sbrt": "GON SBRT",
+    "gon xofigo": "GON Xofigo",
+    "ham 4d": "HAM 4D", # Using HAM consistently
+    "ham 4d rtp": "HAM 4D RTP",
+    "ham 4d poss bh": "Ham 4D poss BH", # Keeping original casing as provided
+    "ham bh": "Ham BH",
+    "ham sbrt": "Ham SBRT",
+    "hammond sbrt": "Hammond SBRT",
+    "hou 4d": "HOU 4D",
+    "hou bh": "HOU BH",
+    "hou bh 4d": "HOU BH 4D",
+    "hou sbrt": "HOU SBRT",
+    "post gk": "Post GK",
+    "post gk mri": "Post GK MRI",
+    "resident's mr-in-radiotherapy workshop": "Resident's MR-in-Radiotherapy Workshop",
+    "seed implant": "Seed Implant",
+    "spaceoar classic": "SpaceOAR Classic",
+    "spaceoar vue": "SpaceOAR Vue",
+    "wh bh": "WH BH",
+    "wh breast compression": "WH Breast Compression",
+    "wh ct/rtp hdr": "WH CT/RTP HDR",
+    "wh hdr": "WH HDR",
+    "wh hdr cyl": "WH HDR CYL",
+    "wh hdr rtp cyl": "WH HDR RTP CYL",    "wh hdr t&o": "WH HDR T&O",
+    "wh rtp bh": "WH RTP BH",
+    "wh sbrt": "WH SBRT",
+    # --- Updated Unity Mappings to a single category ---
+    "cs unity": "Unity Coverage",
+    "cs/ss unity": "Unity Coverage",
+    "dn unity": "Unity Coverage",
+    "jv unity": "Unity Coverage",
+    "ss unity": "Unity Coverage",
+    "ss/cs unity": "Unity Coverage",
+    "ss/dn unity": "Unity Coverage",
+    # Add common variations if the LLM extracts them explicitly
+    "unity": "Unity Coverage", # Generic mapping if LLM just outputs "Unity"
+    "ss/jv unity": "Unity Coverage", # Example: add other combinations as needed
+    # --------------------------------------------------
+    "gk mri": "GK MRI", # Added missing event type
+    # New event types added to match extractor.py and logs
+    "br rtp sbrt bh": "BR RTP SBRT BH",
+    "br rtp bh": "BR RTP BH", 
+    "wh ct/rtp hdr cyl": "WH CT/RTP HDR CYL",
+    "ham 4d ct rtp": "Ham 4D CT RTP", # Keeping casing for now, normalize if needed
+    "gon 4d rtp bh": "GON 4D RTP BH",
+    "wh hdr cyl 4d": "WH HDR CYL 4D",    "br sbrt": "BR SBRT", # Added from previous log warning
+    "gk framed tx": "GK Framed Tx", # Added variation of "Framed GK Tx"
+    "unknown": "Unknown", # Ensure Unknown maps to Unknown
+    # Additional mappings from previous log warnings not explicitly in the provided list:
+    "wh hdr cyl 4:5": "WH HDR CYL", # Map specific variation to general type
+    "ham 4d ct rtp": "HAM 4D RTP", # Standardize HAM capitalization if necessary
+    "hou bh 4d": "HOU BH 4D", # Ensure this is present and correctly cased
+    "br 2 sbrt": "BR2 SBRT", # Map BR 2 to BR2
+    # --- Added mapping for "post GK coverage" variation ---
+    "post gk coverage": "Post GK",
+    # --------------------------------------------------
+    # Add any other raw types you see in the WARNING logs here
 }
 
 # --- Database Configuration ---

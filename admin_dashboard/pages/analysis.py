@@ -53,12 +53,21 @@ def show_analysis_page():
             "Last 30 Days": (current_date - timedelta(days=30), current_date),
             "Last 90 Days": (current_date - timedelta(days=90), current_date),
             "Year to Date": (datetime(current_year, 1, 1).date(), current_date),
+            f"Q1 {current_year-2}": (datetime(current_year-2, 1, 1).date(), datetime(current_year-2, 3, 31).date()),
+            f"Q2 {current_year-2}": (datetime(current_year-2, 4, 1).date(), datetime(current_year-2, 6, 30).date()),
+            f"Q3 {current_year-2}": (datetime(current_year-2, 7, 1).date(), datetime(current_year-2, 9, 30).date()),
+            f"Q4 {current_year-2}": (datetime(current_year-2, 10, 1).date(), datetime(current_year-2, 12, 31).date()),
+            f"Q1 {current_year-1}": (datetime(current_year-1, 1, 1).date(), datetime(current_year-1, 3, 31).date()),
+            f"Q2 {current_year-1}": (datetime(current_year-1, 4, 1).date(), datetime(current_year-1, 6, 30).date()),
+            f"Q3 {current_year-1}": (datetime(current_year-1, 7, 1).date(), datetime(current_year-1, 9, 30).date()),
+            f"Q4 {current_year-1}": (datetime(current_year-1, 10, 1).date(), datetime(current_year-1, 12, 31).date()),
             f"Q1 {current_year}": (datetime(current_year, 1, 1).date(), datetime(current_year, 3, 31).date()),
             f"Q2 {current_year}": (datetime(current_year, 4, 1).date(), datetime(current_year, 6, 30).date()),
             f"Q3 {current_year}": (datetime(current_year, 7, 1).date(), datetime(current_year, 9, 30).date()),
             f"Q4 {current_year}": (datetime(current_year, 10, 1).date(), datetime(current_year, 12, 31).date()),
             f"Full Year {current_year}": (datetime(current_year, 1, 1).date(), datetime(current_year, 12, 31).date()),
             f"Full Year {current_year-1}": (datetime(current_year-1, 1, 1).date(), datetime(current_year-1, 12, 31).date()),
+            f"Full Year {current_year-2}": (datetime(current_year-2, 1, 1).date(), datetime(current_year-2, 12, 31).date())
         }
         
         # Preset selection dropdown
