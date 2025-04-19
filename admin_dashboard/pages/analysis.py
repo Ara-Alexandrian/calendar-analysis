@@ -154,16 +154,45 @@ def show_analysis_page():
             default=personnel_options if len(personnel_options) < 5 else []
         )
 
-        if selected_personnel:
-            # Filter data by selected personnel
-            if 'assigned_personnel' in df_filtered.columns:
-                df_filtered = df_filtered[df_filtered['assigned_personnel'].isin(selected_personnel)]
-            elif 'extracted_personnel' in df_filtered.columns:
-                # Filter based on extracted_personnel lists
-                mask = df_filtered['extracted_personnel'].apply(
-                    lambda x: isinstance(x, list) and any(p in x for p in selected_personnel)
-                )
-                df_filtered = df_filtered[mask]
+        # Add Role selection filter
+        all_roles = sorted(df_filtered['role'].dropna().unique().tolist()) if 'role' in df_filtered.columns else []
+        selected_roles = st.multiselect(
+            "Select Roles",
+            options=all_roles,
+            default=all_roles # Default to all roles selected
+        )
+
+        if selected_personnel or selected_roles:
+            # Start with the filtered data from date range
+            df_combined_filter = df_filtered.copy()
+
+            # Filter by selected personnel if any are selected
+            if selected_personnel:
+                if 'assigned_personnel' in df_combined_filter.columns:
+                    df_combined_filter = df_combined_filter[df_combined_filter['assigned_personnel'].isin(selected_personnel)]
+                elif 'extracted_personnel' in df_combined_filter.columns:
+                    # Filter based on extracted_personnel lists
+                    mask = df_combined_filter['extracted_personnel'].apply(
+                        lambda x: isinstance(x, list) and any(p in x for p in selected_personnel)
+                    )
+                    df_combined_filter = df_combined_filter[mask]
+                else:
+                    # If no personnel column to filter on, and personnel were selected,
+                    # this means no events will match.
+                    df_combined_filter = df_combined_filter.head(0) # Return empty DataFrame
+
+
+            # Filter by selected roles if any are selected
+            if selected_roles and 'role' in df_combined_filter.columns:
+                 df_combined_filter = df_combined_filter[df_combined_filter['role'].isin(selected_roles)]
+            elif selected_roles and 'role' not in df_combined_filter.columns:
+                 # If roles were selected but no 'role' column exists, filter everything out
+                 df_combined_filter = df_combined_filter.head(0)
+
+
+            # Update df_filtered to the combined filtered result
+            df_filtered = df_combined_filter
+
 
     # Event type selection with exclusion
     with st.sidebar.expander("Event Types", expanded=True):
@@ -533,15 +562,15 @@ def show_personnel_workload(df):
         return
 
     try:
-        # Get unique personnel from the 'personnel' column, ensuring it's a Series
-        unique_personnel = sorted(df[personnel_col_to_use].squeeze().dropna().unique())
+        # Get unique personnel from the 'personnel' column
+        unique_personnel = sorted(df[personnel_col_to_use].dropna().unique())
 
         # Show workload for each person
         workload_data = []
 
         for person in unique_personnel:
             # Filter events where this person is mentioned in the final personnel column
-            person_events = df[df[personnel_col_to_use] == person] # Use input df directly
+            person_events = df[df[personnel_col_to_use] == person]
             total_events = len(person_events)
 
             if 'duration_minutes' in person_events.columns:
@@ -644,9 +673,13 @@ def show_workload_distribution(df):
     # Aggregate data by personnel and day (use input df)
     try:
         df['date'] = df['start_time'].dt.date
-        # Group by personnel (ensuring it's a Series) and date
-        workload_by_day_personnel = df.groupby([df[personnel_col_to_use].squeeze(), df['date']])['duration_minutes'].sum().reset_index()
-        workload_by_day_personnel.rename(columns={df[personnel_col_to_use].squeeze().name: 'personnel'}, inplace=True) # Rename the personnel column after groupby
+        # Debugging: Check the type and content of the personnel column before groupby
+        logger.info(f"Type of df['{personnel_col_to_use}'] before groupby in show_workload_distribution: {type(df[personnel_col_to_use])}")
+        logger.info(f"Sample of df['{personnel_col_to_use}'] before groupby in show_workload_distribution: {df[personnel_col_to_use].head().tolist()}")
+
+        # Group by personnel and date
+        workload_by_day_personnel = df.groupby([df[personnel_col_to_use], df['date']])['duration_minutes'].sum().reset_index()
+        workload_by_day_personnel.rename(columns={personnel_col_to_use: 'personnel'}, inplace=True) # Rename the personnel column after groupby
         workload_by_day_personnel['duration_hours'] = workload_by_day_personnel['duration_minutes'] / 60
 
         # Create a pivot table for the heatmap

@@ -287,11 +287,34 @@ def explode_by_personnel(df: pd.DataFrame, personnel_col='assigned_personnel') -
         # Explode the DataFrame using the cleaned list column
         df_exploded = df_copy.explode(personnel_col, ignore_index=True)
 
-        # Rename the exploded column
-        df_exploded.rename(columns={personnel_col: output_col}, inplace=True)
+        # Debugging: Check DataFrame after explode
+        logger.info(f"After explode - Type of df_exploded: {type(df_exploded)}")
+        logger.info(f"After explode - Columns of df_exploded: {df_exploded.columns.tolist()}")
+        if personnel_col in df_exploded.columns:
+             logger.info(f"After explode - Type of df_exploded['{personnel_col}']: {type(df_exploded[personnel_col])}")
+             logger.info(f"After explode - Sample of df_exploded['{personnel_col}']: {df_exploded[personnel_col].head().tolist()}")
+
+        # Assign the exploded Series to the new column name
+        df_exploded[output_col] = df_exploded[personnel_col]
+
+        # Drop the original column
+        df_exploded = df_exploded.drop(columns=[personnel_col])
+
+        # Debugging: Check DataFrame after assignment and drop
+        logger.info(f"After assignment and drop - Type of df_exploded: {type(df_exploded)}")
+        logger.info(f"After assignment and drop - Columns of df_exploded: {df_exploded.columns.tolist()}")
+        if output_col in df_exploded.columns:
+             logger.info(f"After assignment and drop - Type of df_exploded['{output_col}']: {type(df_exploded[output_col])}")
+             logger.info(f"After assignment and drop - Sample of df_exploded['{output_col}']: {df_exploded[output_col].head().tolist()}")
 
         # Ensure the final 'personnel' column is string type and handle potential NaNs from explode
         df_exploded[output_col] = df_exploded[output_col].fillna('Unknown').astype(str)
+
+        # Debugging: Check DataFrame after final type conversion
+        logger.info(f"After final type conversion - Type of df_exploded: {type(df_exploded)}")
+        logger.info(f"After final type conversion - Type of df_exploded['{output_col}']: {type(df_exploded[output_col])}")
+        logger.info(f"After final type conversion - Sample of df_exploded['{output_col}']: {df_exploded[output_col].head().tolist()}")
+
 
         logger.info(f"DataFrame exploded by personnel. Row count changed from {len(df)} to {len(df_exploded)}.")
         return df_exploded
