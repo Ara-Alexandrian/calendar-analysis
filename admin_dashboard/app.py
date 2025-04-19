@@ -26,6 +26,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Hide the default Streamlit sidebar navigation
+st.config.set_option('browser.showSidebarNav', False)
+
+# Custom CSS to hide the default sidebar navigation elements
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] > div:first-child > div:nth-child(2) {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Import auth utilities
 from admin_dashboard.utils.auth import check_authentication, show_login_page
 
