@@ -60,10 +60,10 @@ else:    # Import sidebar component after authentication is confirmed
     if 'admin_current_page' not in st.session_state:
         st.session_state.admin_current_page = "dashboard"
     # Import page components
-    from admin_dashboard.pages.dashboard import show_dashboard_page
-    from admin_dashboard.pages.analysis import show_analysis_page # Corrected import path
-    from admin_dashboard.pages.manual_assignment import show_manual_assignment_page
-    from admin_dashboard.pages.settings import show_settings_page
+    from admin_dashboard.pages._dashboard import show_dashboard_page
+    from admin_dashboard.pages._analysis import show_analysis_page # Corrected import path
+    from admin_dashboard.pages._manual_assignment import show_manual_assignment_page
+    from admin_dashboard.pages._settings import show_settings_page
     
     # Show the appropriate page based on selection
     current_page = st.session_state.admin_current_page
@@ -80,6 +80,6 @@ else:    # Import sidebar component after authentication is confirmed
         # Default to dashboard
         show_dashboard_page()
 
-# Footer
-st.markdown("---")
-st.markdown("© 2025 Calendar Workload Analyzer - Admin Dashboard")
+    # Footer
+    st.markdown("---")
+    st.markdown("© 2025 Calendar Workload Analyzer - Admin Dashboard")
