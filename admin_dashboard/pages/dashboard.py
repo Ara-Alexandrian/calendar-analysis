@@ -344,12 +344,12 @@ def show_recent_activity():
                 # Get recent manual assignments
                 with conn.cursor() as cursor:
                     cursor.execute(f"""
-                    SELECT 'Manual Assignment' as activity_type, summary, last_modified, modified_by
+                    SELECT 'Manual Assignment' as activity_type, summary, processing_date, personnel
                     FROM {settings.DB_TABLE_PROCESSED_DATA}
                     WHERE processing_status = 'manual_assigned'
-                    ORDER BY last_modified DESC
+                    ORDER BY processing_date DESC
                     LIMIT 5
-                    """)
+""")
                     for row in cursor.fetchall():
                         recent_activity.append({
                             "type": row[0],

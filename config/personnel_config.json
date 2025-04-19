@@ -19,7 +19,7 @@
     },
     "D. Neck": {
         "role": "physicist",
-        "clinical_pct": 0.95,
+        "clinical_pct": 1.0,
         "variations": [
             "D. Neck",
             "Neck",
@@ -82,7 +82,7 @@
     },
     "S. Stathakis": {
         "role": "physicist",
-        "clinical_pct": 0.4,
+        "clinical_pct": 0.3,
         "variations": [
             "S. Stathakis",
             "Stathakis",
@@ -209,7 +209,7 @@
     },
     "G. Debevec": {
         "role": "physicist",
-        "clinical_pct": 0.0,
+        "clinical_pct": 0.95,
         "variations": [
             "G. Debevec",
             "Debevec",
@@ -218,7 +218,7 @@
     },
     "T. Hagan": {
         "role": "physicist",
-        "clinical_pct": 0.0,
+        "clinical_pct": 0.95,
         "variations": [
             "T. Hagan",
             "Hagan",
@@ -227,7 +227,7 @@
     },
     "A. Stam": {
         "role": "physicist",
-        "clinical_pct": 0.0,
+        "clinical_pct": 0.5,
         "variations": [
             "A. Stam",
             "Stam",
