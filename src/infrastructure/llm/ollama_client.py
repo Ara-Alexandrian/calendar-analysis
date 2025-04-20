@@ -41,7 +41,7 @@ class OllamaClient(BaseLLMClient):
         """
         self.host = host or settings.OLLAMA_BASE_URL
         self.client = None
-        self.model_name = getattr(settings, "OLLAMA_MODEL_NAME", "llama3")
+        self.model_name = settings.LLM_MODEL
         
         if OLLAMA_AVAILABLE:
             try:
@@ -146,12 +146,12 @@ class OllamaClient(BaseLLMClient):
             logger.error(f"Error during event type extraction: {e}")
             return {"error": str(e)}
     
-    def extract_all(self, event_description: str) -> Dict[str, Any]:
+    def extract_all(self, prompt: str) -> Dict[str, Any]:
         """
-        Extract all relevant information from an event description using Ollama.
+        Extract all relevant information using a provided prompt with Ollama.
         
         Args:
-            event_description (str): The calendar event description text.
+            prompt (str): The prompt to use for extraction.
             
         Returns:
             Dict[str, Any]: Dictionary containing all extracted information.
@@ -161,15 +161,6 @@ class OllamaClient(BaseLLMClient):
             return {"error": "LLM service not available"}
         
         try:
-            prompt = f"""Extract all relevant information from this calendar event.
-                      Return JSON format with 'organizer', 'attendees', and 'event_type' fields.
-                      Event types should be one of: Meeting, Training, Interview, Admin, Break, Travel, or Other.
-                      
-                      Event description:
-                      {event_description}
-                      
-                      Output JSON only with no explanation:"""
-            
             response = self.client.generate(
                 model=self.model_name,
                 prompt=prompt,

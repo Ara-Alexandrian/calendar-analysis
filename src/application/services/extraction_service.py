@@ -39,7 +39,7 @@ class ExtractionService:
         self.canonical_names = canonical_names or self._load_canonical_names()
         
         # Define valid event types from settings
-        self.valid_event_types = getattr(settings, "VALID_EVENT_TYPES", [])
+        self.valid_event_types = list(settings.EVENT_TYPE_MAPPING.values())
         
     def _load_canonical_names(self) -> List[str]:
         """
@@ -50,8 +50,8 @@ class ExtractionService:
         """
         try:
             from functions import config_manager
-            personnel_config = config_manager.load_personnel_config()
-            return [person["name"] for person in personnel_config.get("personnel", [])]
+            # Load canonical names directly from config_manager's derived list
+            return config_manager.get_canonical_names()
         except Exception as e:
             logger.error(f"Error loading canonical names: {e}")
             return []
@@ -82,18 +82,20 @@ class ExtractionService:
             logger.debug(f"Attempting LLM extraction for event: '{event_description[:50]}...'")
             start_time = time.time()
             
-            response = self.llm_client.extract_all(event_description)
+            response = self.llm_client.extract_all(prompt)
             
             elapsed_time = time.time() - start_time
             logger.debug(f"LLM extraction completed in {elapsed_time:.2f} seconds")
             
             # Process and validate the response
             personnel = response.get("personnel", [])
-            event_type = response.get("event_type", "Unknown")
+            extracted_event_type_raw = response.get("event_type", "Unknown")
             
-            # Additional validation can be added here
+            # Normalize extracted event type using the mapping
+            # Convert to lowercase for case-insensitive matching
+            normalized_event_type = settings.EVENT_TYPE_MAPPING.get(extracted_event_type_raw.lower(), "Unknown")
             
-            return {"personnel": personnel, "event_type": event_type}
+            return {"personnel": personnel, "event_type": normalized_event_type}
         except Exception as e:
             logger.error(f"Error during LLM extraction: {e}")
             return {"personnel": ["Error"], "event_type": "Error", "error": str(e)}

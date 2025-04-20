@@ -16,22 +16,32 @@ def save_manual_assignment(entry_id, personnel, event_type):
     
     Args:
         entry_id: Unique identifier for the calendar entry
-        personnel: The personnel name to assign
+        personnel: The personnel name(s) to assign. Can be a single string or a list of strings.
         event_type: The event type to assign
         
     Returns:
         bool: True if successful, False otherwise
     """
     try:
+        # Convert personnel to a list if it's a single string
+        personnel_list = personnel if isinstance(personnel, list) else [personnel]
+        
+        # Filter out empty strings or None values
+        personnel_list = [p for p in personnel_list if p and p.strip()]
+        
+        # Use ["Unknown"] if the list is empty after filtering
+        if not personnel_list:
+            personnel_list = ["Unknown"]
+        
         # Log the assignment
-        logger.info(f"Manual assignment by admin '{st.session_state.admin_username}': Entry ID: {entry_id}, Personnel: {personnel}, Event Type: {event_type}")
+        logger.info(f"Manual assignment by admin '{st.session_state.admin_username}': Entry ID: {entry_id}, Personnel: {personnel_list}, Event Type: {event_type}")
         
         # Save to database if enabled
         if settings.DB_ENABLED:
             conn = db_manager.get_db_connection()
             if conn:
                 # Format personnel as a JSON array string
-                personnel_json = json.dumps([personnel])
+                personnel_json = json.dumps(personnel_list)
                 
                 # Update the database
                 with conn.cursor() as cursor:

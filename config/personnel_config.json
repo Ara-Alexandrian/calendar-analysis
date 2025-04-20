@@ -233,5 +233,12 @@
             "Stam",
             "AS"
         ]
+    },
+    "Not Specified": {
+        "role": "other",
+        "clinical_pct": NaN,
+        "variations": [
+            "Not Specified"
+        ]
     }
 }

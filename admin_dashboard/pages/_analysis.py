@@ -151,7 +151,7 @@ def show_analysis_page():
         selected_personnel = st.multiselect(
             "Select Personnel",
             options=personnel_options,
-            default=personnel_options if len(personnel_options) < 5 else []
+            default=[] # Removed default selection
         )
 
         # Add Role selection filter
@@ -159,7 +159,7 @@ def show_analysis_page():
         selected_roles = st.multiselect(
             "Select Roles",
             options=all_roles,
-            default=all_roles # Default to all roles selected
+            default=[] # Removed default selection
         )
 
         if selected_personnel or selected_roles:
@@ -201,7 +201,7 @@ def show_analysis_page():
             excluded_event_types = st.multiselect(
                 "Exclude Event Types",
                 options=all_event_types,
-                default=[et for et in all_event_types if "Unity" in et]
+                default=[] # Removed default exclusion
             )
 
             # Filter data by excluding selected event types
@@ -494,13 +494,13 @@ def show_event_analysis(df):
 
     # Event type distribution
     if 'extracted_event_type' in df.columns:
-        # Get top event types
-        event_counts = df['extracted_event_type'].value_counts().head(10)
+        # Get event type counts
+        event_counts = df['extracted_event_type'].value_counts()
 
         fig = px.pie(
             values=event_counts.values,
             names=event_counts.index,
-            title='Top Event Types',
+            title='Event Type Distribution',
             hole=0.4
         )
 
@@ -613,6 +613,27 @@ def show_personnel_workload(df):
                 color_continuous_scale='Plasma'
             )
             st.plotly_chart(fig_events, use_container_width=True)
+
+        # --- Add Event Type Distribution for Selected Personnel ---
+        if selected_personnel: # Only show if personnel are selected in the sidebar
+            st.subheader("Event Type Distribution for Selected Personnel")
+
+            # Filter the exploded data for the selected personnel
+            df_selected_personnel = df[df[personnel_col_to_use].isin(selected_personnel)]
+
+            if not df_selected_personnel.empty and 'extracted_event_type' in df_selected_personnel.columns:
+                event_counts_selected = df_selected_personnel['extracted_event_type'].value_counts()
+
+                fig_personnel_events = px.pie(
+                    values=event_counts_selected.values,
+                    names=event_counts_selected.index,
+                    title=f'Event Type Distribution for {", ".join(selected_personnel)}',
+                    hole=0.4
+                )
+                st.plotly_chart(fig_personnel_events, use_container_width=True)
+            elif selected_personnel:
+                 st.info(f"No events found for the selected personnel: {', '.join(selected_personnel)}")
+        # --- End Added Section ---
 
 
     except Exception as e:
