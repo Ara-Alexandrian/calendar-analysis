@@ -20,7 +20,7 @@ if PROJECT_ROOT not in sys.path:
 try:
     # Import settings and database manager
     from config import settings
-    from functions import db_manager
+    from functions import db as db_manager  # Updated import for new module structure
     import pandas as pd
     import psycopg2
 

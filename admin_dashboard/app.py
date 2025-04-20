@@ -26,6 +26,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Hide the default Streamlit sidebar navigation
+st.config.set_option('browser.showSidebarNav', False)
+
+# Custom CSS to hide the default sidebar navigation elements
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] > div:first-child > div:nth-child(2) {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Import auth utilities
 from admin_dashboard.utils.auth import check_authentication, show_login_page
 
@@ -55,15 +67,28 @@ else:    # Import sidebar component after authentication is confirmed
     
     # Display sidebar
     show_sidebar()
-    
-    # Initialize current page in session state if it doesn't exist
+      # Initialize current page in session state if it doesn't exist
     if 'admin_current_page' not in st.session_state:
         st.session_state.admin_current_page = "dashboard"
-    # Import page components
-    from admin_dashboard.pages.dashboard import show_dashboard_page
-    from admin_dashboard.pages.analysis import show_analysis_page # Corrected import path
-    from admin_dashboard.pages.manual_assignment import show_manual_assignment_page
-    from admin_dashboard.pages.settings import show_settings_page
+    
+    # Try to import page components with proper error handling
+    try:
+        from admin_dashboard.pages._dashboard import show_dashboard_page
+        from admin_dashboard.pages._analysis import show_analysis_page
+        # Handle manual assignment page separately
+        try:
+            from admin_dashboard.pages._manual_assignment import show_manual_assignment_page
+        except ImportError as e:
+            logger.error(f"Error importing manual assignment page: {e}")
+            def show_manual_assignment_page():
+                st.title("Manual Assignment (Unavailable)")
+                st.error("The manual assignment page could not be loaded due to an error.")
+                st.info("Please check the logs for more information.")
+                
+        from admin_dashboard.pages._settings import show_settings_page
+    except ImportError as e:
+        logger.error(f"Error importing page components: {e}")
+        st.error("Some page components could not be loaded. Please check logs for more information.")
     
     # Show the appropriate page based on selection
     current_page = st.session_state.admin_current_page
@@ -80,6 +105,6 @@ else:    # Import sidebar component after authentication is confirmed
         # Default to dashboard
         show_dashboard_page()
 
-# Footer
-st.markdown("---")
-st.markdown("© 2025 Calendar Workload Analyzer - Admin Dashboard")
+    # Footer
+    st.markdown("---")
+    st.markdown("© 2025 Calendar Workload Analyzer - Admin Dashboard")
