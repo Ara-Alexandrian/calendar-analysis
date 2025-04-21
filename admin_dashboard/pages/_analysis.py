@@ -482,9 +482,14 @@ def show_analysis_overview(df):
             logger.error(f"Error creating overview charts: {e}")
             st.error("Error creating charts. See logs for details.")
 
-def show_event_analysis(df):
+def show_event_analysis(df, selected_personnel=None):
     """
     Display event analysis charts and metrics.
+    If personnel are selected, show individual analyses as well.
+    
+    Args:
+        df: DataFrame containing event data
+        selected_personnel: List of selected personnel names (optional)
     """
     st.subheader("Event Analysis")
 
@@ -492,6 +497,17 @@ def show_event_analysis(df):
         st.warning("No data available for event analysis.")
         return
 
+    # Determine if we're working with multiple personnel
+    has_personnel_selection = selected_personnel is not None and len(selected_personnel) > 0
+    personnel_col_to_use = 'personnel'
+
+    # --- OVERALL ANALYSIS ---
+    
+    # Only show the overall analysis header if we also have individual personnel selected
+    if has_personnel_selection:
+        st.markdown("### Overall Event Analysis")
+        st.caption("Analysis for all events in the filtered data")
+    
     # Event type distribution
     if 'extracted_event_type' in df.columns:
         # Get event type counts
@@ -500,7 +516,7 @@ def show_event_analysis(df):
         fig = px.pie(
             values=event_counts.values,
             names=event_counts.index,
-            title='Event Type Distribution',
+            title='Overall Event Type Distribution',
             hole=0.4
         )
 
@@ -517,7 +533,7 @@ def show_event_analysis(df):
                 date_counts,
                 x='date',
                 y='count',
-                title='Events Over Time',
+                title='Overall Events Over Time',
                 markers=True
             )
 
@@ -534,7 +550,7 @@ def show_event_analysis(df):
 
             fig = px.histogram(
                 duration_hours,
-                title='Event Duration Distribution',
+                title='Overall Event Duration Distribution',
                 labels={'value': 'Duration (hours)'},
                 nbins=20
             )
@@ -543,10 +559,152 @@ def show_event_analysis(df):
             st.plotly_chart(fig, use_container_width=True)
         except Exception as e:
             logger.error(f"Error creating duration distribution chart: {e}")
+    
+    # --- SELECTED PERSONNEL ANALYSIS ---
+    
+    # If specific personnel are selected, add individual and combined analysis
+    if has_personnel_selection:
+        # First, add a combined analysis for all selected personnel together
+        st.markdown("---")
+        st.markdown(f"### Combined Analysis for Selected Personnel")
+        st.caption(f"Analysis for: {', '.join(selected_personnel)}")
+        
+        # Filter for events matching any selected personnel
+        df_selected = df[df[personnel_col_to_use].isin(selected_personnel)]
+        
+        if df_selected.empty:
+            st.info(f"No events found for the selected personnel.")
+        else:
+            # Event type distribution for selected personnel combined
+            if 'extracted_event_type' in df_selected.columns:
+                event_counts = df_selected['extracted_event_type'].value_counts()
+                
+                fig = px.pie(
+                    values=event_counts.values,
+                    names=event_counts.index,
+                    title=f'Event Type Distribution for Selected Personnel',
+                    hole=0.4
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Events over time for selected personnel combined
+            if 'date' not in df_selected.columns and 'start_time' in df_selected.columns:
+                df_selected['date'] = df_selected['start_time'].dt.date
+            
+            if 'date' in df_selected.columns:
+                try:
+                    date_counts = df_selected.groupby('date').size().reset_index(name='count')
+                    
+                    fig = px.line(
+                        date_counts,
+                        x='date',
+                        y='count',
+                        title='Events Over Time for Selected Personnel',
+                        markers=True
+                    )
+                    fig.update_layout(xaxis_title="Date", yaxis_title="Number of Events")
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    logger.error(f"Error creating events over time chart for selected personnel: {e}")
+            
+            # Event duration distribution for selected personnel combined
+            if 'duration_minutes' in df_selected.columns:
+                try:
+                    duration_hours = df_selected['duration_minutes'] / 60
+                    
+                    fig = px.histogram(
+                        duration_hours,
+                        title='Event Duration Distribution for Selected Personnel',
+                        labels={'value': 'Duration (hours)'},
+                        nbins=20
+                    )
+                    fig.update_layout(xaxis_title="Duration (hours)", yaxis_title="Count")
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    logger.error(f"Error creating duration distribution chart for selected personnel: {e}")
+        
+        # Now add individual analysis for each personnel in expandable sections
+        st.markdown("---")
+        st.markdown("### Individual Personnel Analysis")
+        
+        for person in selected_personnel:
+            with st.expander(f"Analysis for {person}", expanded=False):
+                # Filter for just this person
+                df_person = df[df[personnel_col_to_use] == person]
+                
+                if df_person.empty:
+                    st.info(f"No events found for {person}.")
+                    continue
+                
+                # Show summary metrics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Total Events", len(df_person))
+                with col2:
+                    if 'duration_minutes' in df_person.columns:
+                        total_hours = df_person['duration_minutes'].sum() / 60
+                        st.metric("Total Hours", f"{total_hours:.1f}")
+                  # Event type distribution for individual
+                if 'extracted_event_type' in df_person.columns:
+                    # Debug: Print event types for A. Alexandrian to identify issues
+                    if person == 'A. Alexandrian':
+                        st.write("### Debug: Original Event Types for A. Alexandrian")
+                        event_types_debug = df_person['extracted_event_type'].value_counts()
+                        st.write(event_types_debug)
+                    
+                    event_counts = df_person['extracted_event_type'].value_counts()
+                    
+                    fig = px.pie(
+                        values=event_counts.values,
+                        names=event_counts.index,
+                        title=f'Event Type Distribution for {person}',
+                        hole=0.4
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Events over time for individual
+                if 'date' not in df_person.columns and 'start_time' in df_person.columns:
+                    df_person['date'] = df_person['start_time'].dt.date
+                
+                if 'date' in df_person.columns:
+                    try:
+                        date_counts = df_person.groupby('date').size().reset_index(name='count')
+                        
+                        fig = px.line(
+                            date_counts,
+                            x='date',
+                            y='count',
+                            title=f'Events Over Time for {person}',
+                            markers=True
+                        )
+                        fig.update_layout(xaxis_title="Date", yaxis_title="Number of Events")
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        logger.error(f"Error creating events over time chart for {person}: {e}")
+                
+                # Event duration distribution for individual
+                if 'duration_minutes' in df_person.columns and len(df_person) > 1:
+                    try:
+                        duration_hours = df_person['duration_minutes'] / 60
+                        
+                        fig = px.histogram(
+                            duration_hours,
+                            title=f'Event Duration Distribution for {person}',
+                            labels={'value': 'Duration (hours)'},
+                            nbins=min(20, len(df_person))
+                        )
+                        fig.update_layout(xaxis_title="Duration (hours)", yaxis_title="Count")
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        logger.error(f"Error creating duration distribution chart for {person}: {e}")
 
-def show_personnel_workload(df):
+def show_personnel_workload(df, selected_personnel=None):
     """
     Display personnel workload analysis.
+    
+    Args:
+        df: DataFrame containing event data
+        selected_personnel: List of selected personnel names (optional)
     """
     st.subheader("Personnel Workload Analysis")
 

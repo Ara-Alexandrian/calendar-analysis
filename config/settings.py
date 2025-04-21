@@ -74,7 +74,7 @@ EVENT_TYPE_MAPPING = {
     'br seed implant': 'BR Seed Implant',
     'br unity ct': 'Unity Coverage',
     'br unity rtp': 'BR UNITY RTP',
-    'br unity rtp 4d': 'Unity Coverage',
+    'br unity rtp 4d': 'BR UNITY RTP 4D',
     'br volume study': 'BR Volume Study',
     'br2 sbrt': 'BR2 SBRT',
     'br3 sbrt': 'BR3 SBRT',
