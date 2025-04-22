@@ -20,7 +20,8 @@ if PROJECT_ROOT not in sys.path:
 try:
     # Import settings and database manager
     from config import settings
-    from functions import db as db_manager  # Updated import for new module structure
+    # from functions import db as db_manager  # Old import
+    from src.infrastructure.persistence import connection, operations, schema, personnel_ops, status_ops, llm_info # New import
     import pandas as pd
     import psycopg2
 
@@ -36,7 +37,7 @@ try:
 
     # Test database connection
     print("\n=== Testing Connection ===")
-    conn = db_manager.get_db_connection()
+    conn = connection.get_db_connection() # Updated call
     if conn:
         print("✅ Database connection successful!")
         
@@ -86,12 +87,12 @@ try:
         # Check if tables need to be created
         if not tables:
             print("\n=== Creating Tables ===")
-            success = db_manager.ensure_tables_exist()
+            success = schema.ensure_tables_exist() # Updated call
             print(f"Table creation {'succeeded' if success else 'failed'}")
-            
+
             # Check again after creation
             if success:
-                conn = db_manager.get_db_connection()  # Get fresh connection
+                conn = connection.get_db_connection()  # Updated call
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT table_name 

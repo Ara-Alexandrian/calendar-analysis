@@ -15,7 +15,8 @@ import threading
 # Import from config and other modules
 from config import settings
 from functions import config_manager
-from .client import get_llm_client, is_llm_ready, restart_ollama_server
+from src.infrastructure.llm.factory import LLMClientFactory # Updated import
+# from .client import is_llm_ready, restart_ollama_server # Keep old ones commented for now, will replace usage later
 from .utils import get_persistent_progress_bar
 
 try:
@@ -210,7 +211,8 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with new 'extracted_personnel' and 'extracted_event_type' columns.
     """
-    if not is_llm_ready():
+    client = LLMClientFactory.get_client() # Get client
+    if not client or not client.is_available(): # Check client and availability
         st.error("LLM client is not available. Cannot perform extraction.")
         df['extracted_personnel'] = [["Unknown_Error"]] * len(df)
         df['extracted_event_type'] = ["Unknown_Error"] * len(df)
@@ -230,7 +232,7 @@ def run_llm_extraction_parallel(df: pd.DataFrame) -> pd.DataFrame:
     personnel_results = [None] * len(summaries) # Initialize results lists
     event_type_results = [None] * len(summaries)
 
-    llm_client = get_llm_client() # Get cached client
+    llm_client = LLMClientFactory.get_client() # Updated usage
     _, _, canonical_names = config_manager.get_personnel_details() # Get current names
 
     if not canonical_names:
@@ -400,7 +402,7 @@ def ultra_basic_extraction(df):
         return df_copy
 
     # Get LLM client
-    client = get_llm_client()
+    client = LLMClientFactory.get_client() # Updated usage
     if not client:
         logger.error("Cannot run ultra_basic_extraction: Failed to get LLM client.")
         st.error("Failed to connect to LLM.")
@@ -510,7 +512,9 @@ def ultra_basic_extraction(df):
             time.sleep(1)  # Longer delay after error
             # Try to get a new client instance in case the old one is stuck
             logger.warning("[UltraBasic] Attempting to refresh LLM client after error.")
-            client = get_llm_client()
+            # Clear cache and get new client
+            LLMClientFactory.get_client.clear() # Clear cache first
+            client = LLMClientFactory.get_client() # Updated usage
             if not client:
                  logger.error("[UltraBasic] Failed to refresh LLM client. Stopping extraction.")
                  st.error("LLM connection lost. Processing stopped.")
@@ -550,7 +554,8 @@ def run_llm_extraction_sequential(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with a new 'extracted_personnel' column containing lists of names
         or error strings ('Unknown', 'Unknown_Error').
     """
-    if not is_llm_ready():
+    client = LLMClientFactory.get_client() # Get client
+    if not client or not client.is_available(): # Check client and availability
         logger.warning("LLM client is not available. Cannot perform extraction.")
         df['extracted_personnel'] = [["Unknown_Error"]] * len(df) # Add column indicating failure
         return df
@@ -599,7 +604,8 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
         bool: True if processing started successfully
     """
     try:
-        if not is_llm_ready():
+        client = LLMClientFactory.get_client() # Get client
+        if not client or not client.is_available(): # Check client and availability
             logger.error("LLM client is not available. Cannot perform background extraction.")
             return False
 
@@ -612,20 +618,20 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
 
         summaries = df_copy['summary'].tolist()
 
-        llm_client = get_llm_client() # Get cached client
+        llm_client = LLMClientFactory.get_client() # Updated usage
         _, _, canonical_names = config_manager.get_personnel_details() # Get current names
 
         if not canonical_names:
             logger.error("Cannot run background LLM extraction: No canonical names found in configuration.")
             return False
 
-        # Import here to avoid circular imports
-        from functions import db_manager
+        # Import persistence modules directly
+        from src.infrastructure.persistence import operations as persistence_ops
 
         # First save the preprocessed data to database with 'processing' status (if DB enabled)
         if settings.DB_ENABLED:
             df_copy['processing_status'] = 'processing'
-            db_manager.save_partial_processed_data(df_copy, batch_id)
+            persistence_ops.save_partial_processed_data(df_copy, batch_id) # Updated call
         else:
             # Initialize the background_processed_data in session state for non-DB mode
             if not hasattr(st.session_state, 'background_processed_data'):
@@ -654,7 +660,8 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
             print(f"\n\033[1m>>> Processing {len(summaries)} items with batch ID {batch_id} <<<\033[0m")
 
             # Get a fresh LLM client for this thread
-            thread_llm_client = get_llm_client()
+            LLMClientFactory.get_client.clear() # Clear cache first
+            thread_llm_client = LLMClientFactory.get_client() # Updated usage
             _, _, thread_canonical_names = config_manager.get_personnel_details()
 
             if not thread_llm_client or not thread_canonical_names:
@@ -678,7 +685,8 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                     # Refresh the client connection every 100 items
                     if i > 0 and i % 100 == 0:
                         logger.info(f"Refreshing LLM client after processing {i} items...")
-                        thread_llm_client = get_llm_client()
+                        LLMClientFactory.get_client.clear() # Clear cache first
+                        thread_llm_client = LLMClientFactory.get_client() # Updated usage
 
                     # Extract personnel and event type from the summary
                     personnel_list, event_type = extract_personnel_with_llm(summary, thread_llm_client, thread_canonical_names)
@@ -690,7 +698,7 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                     if i > 0 and i % save_frequency == 0:
                         if settings.DB_ENABLED:
                             batch_df = df_copy.iloc[max(0, i - save_frequency):i+1].copy()
-                            db_manager.save_partial_processed_data(batch_df, batch_id)
+                            persistence_ops.save_partial_processed_data(batch_df, batch_id) # Updated call
                             logger.info(f"Saved progress for items {max(0, i - save_frequency)}-{i}.")                    # Update progress tracking with more visible output
                     processed_count += 1
                     term_progress.update(1)
@@ -714,7 +722,8 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
                     # Refresh the client after multiple errors
                     if error_count > 5:
                         logger.warning(f"Encountered {error_count} errors. Refreshing LLM client...")
-                        thread_llm_client = get_llm_client()
+                        LLMClientFactory.get_client.clear() # Clear cache first
+                        thread_llm_client = LLMClientFactory.get_client() # Updated usage
                         error_count = 0
                         time.sleep(2)  # Longer delay after multiple errors
                     else:
@@ -723,28 +732,29 @@ def run_llm_extraction_background(df: pd.DataFrame, batch_id: str) -> bool:
             # After all individual processing is done, save final results
             if settings.DB_ENABLED:
                 logger.info(f"Saving final results for batch {batch_id}")
-                db_manager.save_partial_processed_data(df_copy, batch_id)
+                persistence_ops.save_partial_processed_data(df_copy, batch_id) # Updated call
 
-            # Import normalizer module for the next step
-            from .normalizer import normalize_extracted_personnel
+            # Import and use the NormalizationService
+            from src.application.services.normalization_service import NormalizationService
 
             # Normalize the extracted personnel
             logger.info(f"Normalizing extracted names for batch {batch_id}")
             try:
-                normalized_df = normalize_extracted_personnel(df_copy)
+                normalization_service = NormalizationService()
+                normalized_df = normalization_service.normalize_extracted_personnel(df_copy)
 
                 # Save final normalized results
                 if settings.DB_ENABLED:
-                    db_manager.save_partial_processed_data(normalized_df, batch_id)
+                    persistence_ops.save_partial_processed_data(normalized_df, batch_id) # Updated call
 
                     # Explode by personnel for final analysis-ready data
                     from functions import data_processor
                     logger.info(f"Exploding by personnel for batch {batch_id}")
                     analysis_df = data_processor.explode_by_personnel(normalized_df, personnel_col='assigned_personnel')
-                    db_manager.save_processed_data_to_db(analysis_df, batch_id)
+                    persistence_ops.save_processed_data_to_db(analysis_df, batch_id) # Updated call
 
                     # Mark the calendar file as processed
-                    db_manager.mark_calendar_file_as_processed(batch_id)
+                    persistence_ops.mark_calendar_file_as_processed(batch_id) # Updated call
                 else:
                     # Store results in session state for non-DB mode
                     from functions import data_processor

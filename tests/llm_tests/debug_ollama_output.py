@@ -153,20 +153,21 @@ def test_with_project_client():
     
     try:
         # Import from the project's functions
-        from functions.llm_extraction.client import get_llm_client, is_llm_ready
-        
-        # Check if LLM is ready
-        ready = is_llm_ready()
-        print(f"LLM ready: {ready}")
-        
-        if not ready:
-            print("LLM is not ready. Cannot test with project client.")
-            return
-            
-        # Get the client
-        client = get_llm_client()
+        from src.infrastructure.llm.factory import LLMClientFactory # Updated import
+        # from functions.llm_extraction.client import is_llm_ready # Old import
+
+        # Get the client first
+        client = LLMClientFactory.get_client() # Updated usage
         if not client:
             print("Failed to get LLM client.")
+            return
+
+        # Check if LLM is ready using the client instance
+        ready = client.is_available() # Updated usage
+        print(f"LLM ready: {ready}")
+
+        if not ready:
+            print("LLM is not ready. Cannot test with project client.")
             return
             
         print(f"Client obtained. Testing with model: {MODEL}")

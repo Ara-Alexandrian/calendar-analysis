@@ -7,7 +7,8 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 
 # Import from our simplified Ollama client for service check
-from functions.llm_extraction.ollama_client import is_ollama_ready
+# from functions.llm_extraction.ollama_client import is_ollama_ready # Old import
+from src.infrastructure.llm.factory import LLMClientFactory # New import
 
 # Import our sequential processor for event-by-event processing
 from functions.llm_extraction.sequential_processor import SequentialProcessor
@@ -38,7 +39,8 @@ def process_events_with_llm(events_df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         pd.DataFrame: DataFrame with added 'extracted_personnel' column
     """
-    if not is_llm_ready():
+    client = LLMClientFactory.get_client() # Get client
+    if not client or not client.is_available(): # Check client and availability
         logger.warning("Ollama service not available, skipping extraction")
         # Add an empty extraction column
         events_df['extracted_personnel'] = [["Unknown"]] * len(events_df)

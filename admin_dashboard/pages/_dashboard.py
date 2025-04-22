@@ -8,8 +8,10 @@ import datetime
 import logging
 import plotly.express as px
 from config import settings
-from functions import db as db_manager
-from functions.llm_extraction.client import is_llm_ready
+# from functions import db as db_manager # Old import
+from src.infrastructure.persistence import connection, operations, schema, personnel_ops, status_ops, llm_info # New import
+from src.infrastructure.llm.factory import LLMClientFactory # Updated import
+# from functions.llm_extraction.client import is_llm_ready # Old import
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,7 @@ def check_system_health():
     # Check database connection
     if settings.DB_ENABLED:
         try:
-            conn = db_manager.get_db_connection()
+            conn = connection.get_db_connection() # Updated call
             if conn:
                 health["database"]["status"] = "ok"
                 health["database"]["message"] = "Connected successfully"
@@ -74,7 +76,8 @@ def check_system_health():
     
     # Check LLM connectivity
     try:
-        llm_status = is_llm_ready()
+        client = LLMClientFactory.get_client() # Get client
+        llm_status = client.is_available() if client else False # Check availability
         if llm_status:
             health["llm"]["status"] = "ok"
             health["llm"]["message"] = f"Connected to {settings.LLM_PROVIDER} ({settings.LLM_MODEL})"
@@ -116,7 +119,7 @@ def get_system_statistics():
     # Get statistics from database if enabled
     if settings.DB_ENABLED:
         try:
-            conn = db_manager.get_db_connection()
+            conn = connection.get_db_connection() # Updated call
             if conn:
                 # Total events
                 with conn.cursor() as cursor:
@@ -286,15 +289,21 @@ def show_quick_actions():
     with col1:
         if st.button("🔄 Restart LLM", use_container_width=True):
             try:
-                from functions.llm_extraction.client import restart_ollama_server
-                result = restart_ollama_server()
-                if result:
-                    st.success("LLM service restarted successfully")
+                # from functions.llm_extraction.client import restart_ollama_server # Old import
+                client = LLMClientFactory.get_client() # Get client
+                if client and hasattr(client, 'restart_server'): # Check if client exists and has method
+                    result = client.restart_server() # Call method on client
+                    if result:
+                        st.success("LLM service restarted successfully")
+                    else:
+                        st.error("Failed to restart LLM service (client method returned False)")
+                elif client:
+                    st.error("LLM client does not support restarting.")
                 else:
-                    st.error("Failed to restart LLM service")
+                    st.error("LLM client not available.")
             except Exception as e:
                 st.error(f"Error restarting LLM service: {e}")
-    
+
     with col2:
         if st.button("📊 Generate Reports", use_container_width=True):
             st.info("Report generation will be available in a future update")

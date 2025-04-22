@@ -6,7 +6,8 @@ import logging
 import json
 from config import settings
 # from . import db_manager # Old import causing error
-from functions import db as db_manager # Import the new db package
+# from functions import db as db_manager # Old import
+from src.infrastructure.persistence import connection, operations, schema, personnel_ops # New import
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,16 @@ def initialize_database():
     Should be called during application startup.
     """
     # Make sure database and tables exist
-    conn = db_manager.get_db_connection()
+    conn = connection.get_db_connection() # Updated call
     if not conn:
         logger.warning("Could not establish database connection for initialization.")
         return False
     
     conn.close()  # Close initial connection after database creation
-    
+
     # Create all tables
-    db_manager.ensure_tables_exist()
-    
+    schema.ensure_tables_exist() # Updated call
+
     # Initialize baseline personnel configuration if none exists
     initialize_personnel_config()
     
@@ -61,7 +62,7 @@ def initialize_personnel_config():
     Checks if personnel configuration exists in database, and if not,
     initializes with default values.
     """
-    conn = db_manager.get_db_connection()
+    conn = connection.get_db_connection() # Updated call
     if not conn:
         return False
     

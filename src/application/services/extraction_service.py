@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 import streamlit as st
 
-from src.infrastructure.llm import get_llm_client
+from src.infrastructure.llm.factory import LLMClientFactory # Updated import
 from config import settings
 
 # Configure logging
@@ -35,9 +35,9 @@ class ExtractionService:
             canonical_names (Optional[List[str]]): List of canonical personnel names.
                                                  If None, loads from configuration.
         """
-        self.llm_client = get_llm_client()
+        self.llm_client = LLMClientFactory.get_client() # Updated usage
         self.canonical_names = canonical_names or self._load_canonical_names()
-        
+
         # Define valid event types from settings
         self.valid_event_types = list(settings.EVENT_TYPE_MAPPING.values())
         
